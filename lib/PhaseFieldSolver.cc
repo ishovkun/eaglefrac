@@ -50,7 +50,7 @@ namespace phase_field
 
     // variables
     TrilinosWrappers::MPI::Vector residual, rhs_vector, solution, solution_update,
-      old_solution, old_old_phase_field;
+      old_solution, old_old_solution;
     TrilinosWrappers::SparseMatrix system_matrix;
     ConstraintMatrix constraints;
 
@@ -126,6 +126,8 @@ namespace phase_field
     reduced_system_matrix.reinit(dsp);
     IndexSet solution_index_set = dof_handler.locally_owned_dofs();
     solution.reinit(solution_index_set, mpi_communicator);
+    old_solution.reinit(solution_index_set, mpi_communicator);
+    old_old_solution.reinit(solution_index_set, mpi_communicator);
     rhs_vector.reinit(solution_index_set, mpi_communicator);
 
     // TODO:
@@ -152,7 +154,7 @@ namespace phase_field
                             update_JxW_values);
     const unsigned int dofs_per_cell   = fe.dofs_per_cell;
     const unsigned int n_q_points      = quadrature_formula.size();
-    FullMatrix<double>   local_matrix(dofs_per_cell, dofs_per_cell);
+    // FullMatrix<double>   local_matrix(dofs_per_cell, dofs_per_cell);
     Vector<double>       local_rhs(dofs_per_cell);
     std::vector<types::global_dof_index> local_dof_indices(dofs_per_cell);
 
@@ -162,10 +164,11 @@ namespace phase_field
     SymmetricTensor<2,dim>	eps_i;
 
     // store solution displacement gradients
-    std::vector< SymmetricTensor<2,dim> >
-      strain_tensor(quadrature_formula.size());
+    std::vector< SymmetricTensor<2,dim> > strain_tensor(n_q_points);
     SymmetricTensor<2, dim> stress_tensor_plus, stress_tensor_minus;
     Tensor<1, dim> grad_xi_phi_i;
+    std::vector<double> old_phi_values(n_q_points),
+                        old_old_phi_values(n_q_points);
 
     typename DoFHandler<dim>::active_cell_iterator
       cell = dof_handler.begin_active(),
@@ -175,13 +178,17 @@ namespace phase_field
       if (cell->is_locally_owned())
         {
           fe_values.reinit(cell);
-          local_matrix = 0;
           local_rhs = 0;
           // right_hand_side.value_list(fe_values.get_quadrature_points(),
           //                            rhs_values);
 
           fe_values[displacement].get_function_symmetric_gradients
             (solution, strain_tensor);
+          // get old phi solutions for extrapolation
+          fe_values[phase_field].get_function_values(old_solution,
+                                                     old_phi_values);
+          fe_values[phase_field].get_function_values(old_old_solution,
+                                                     old_old_phi_values);
 
           for (unsigned int q=0; q<n_q_points; ++q) {
             get_stress_decomposition(strain_tensor[q],

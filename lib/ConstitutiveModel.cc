@@ -86,21 +86,8 @@ namespace constitutive_model {
     p_matrix[1][1] = tmp/sqrt(1 + tmp*tmp);
     strain_tensor_plus = p_matrix*lambda_matrix*transpose(p_matrix);
 
-    // std::cout << (tmp*tmp) << std::endl;
     // std::cout << strain_tensor_plus[0][0] << "\t" << strain_tensor_plus[0][1] << std::endl;
     // std::cout << strain_tensor_plus[1][0] << "\t" << strain_tensor_plus[1][1] << std::endl;
-    // std::cout << std::endl;
-    // lambda_matrix[0][0] = 1;
-    // lambda_matrix[1][1] = 1;
-    // p_matrix[0][0] = 1;
-    // p_matrix[0][1] = 0;
-    // p_matrix[1][0] = 0;
-    // p_matrix[1][1] = 1;
-    // Tensor<2, dim> result;
-    // result = p_matrix*lambda_matrix*transpose(p_matrix);
-    // std::cout << result[0][0] << "\t" << result[0][1] << std::endl;
-    // std::cout << result[1][0] << "\t" << result[1][1] << std::endl;
-    // std::cout << std::endl;
   }  // EOM
 
 }  // end of namespace

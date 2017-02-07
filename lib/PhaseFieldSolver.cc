@@ -62,6 +62,8 @@ namespace phase_field
                                       const SymmetricTensor<2,dim> &eps_u_i,
                                       SymmetricTensor<2,dim>       &sigma_u_plus_i,
                                       SymmetricTensor<2,dim>       &sigma_u_minus_i);
+    void assemble_mass_matrix_diagonal(TrilinosWrappers::SparseMatrix &mass_matrix);
+
     // variables
     MPI_Comm &mpi_communicator;
     DoFHandler<dim> dof_handler;
@@ -72,6 +74,8 @@ namespace phase_field
     IndexSet locally_owned_dofs, locally_relevant_dofs;
     IndexSet active_set;
     TrilinosWrappers::SparseMatrix reduced_system_matrix;
+    TrilinosWrappers::MPI::Vector mass_matrix_diagonal;
+
 
   public:
     double time_step;
@@ -138,18 +142,18 @@ namespace phase_field
     // Add some stuff to make mass matrix B and reinitialize reduced system
     // matrix, residual, and rhs
     TrilinosWrappers::SparseMatrix mass_matrix;
-    // mass_matrix.reinit(dsp);
-    // assemble_mass_matrix_diagonal(mass_matrix);
-    // diagonal_of_mass_matrix.reinit (solution_index_set);
-    // for (unsigned int j=0; j<solution.size (); j++)
-    //   diagonal_of_mass_matrix (j) = mass_matrix.diag_element (j);
+    mass_matrix.reinit(dsp);
+    assemble_mass_matrix_diagonal(mass_matrix);
+    mass_matrix_diagonal.reinit(solution_index_set);
+    for (unsigned int j=0; j<solution.size (); j++)
+      mass_matrix_diagonal(j) = mass_matrix.diag_element(j);
   }  // EOM
 
 
   template <int dim>
   void PhaseFieldSolver<dim>::assemble_system()
   {
-    TimerOutput::Scope t(computing_timer, "assemble rhs vector");
+    TimerOutput::Scope t(computing_timer, "assemble system");
 
     const QGauss<dim> quadrature_formula(3);
     FEValues<dim> fe_values(fe, quadrature_formula,
@@ -269,7 +273,6 @@ namespace phase_field
                                                  system_matrix,
                                                  rhs_vector,
                                                  true);
-          break;
         }  // end of cell loop
 
   } // EOM
@@ -399,5 +402,41 @@ namespace phase_field
     sigma_u_minus_i[1][1] += lambda*(trace_eps - trace_eps_u_i);
 
   }  // EOM
+
+
+  template <int dim>
+  void PhaseFieldSolver<dim>::
+  assemble_mass_matrix_diagonal(TrilinosWrappers::SparseMatrix &mass_matrix)
+  {
+    Assert (fe.degree == 1, ExcNotImplemented());
+    TimerOutput::Scope t(computing_timer, "assemble mass matrix diagonal");
+    const QTrapez<dim>        quadrature_formula;
+    FEValues<dim>             fe_values (fe,
+                                         quadrature_formula,
+                                         update_values   |
+                                         update_JxW_values);
+    const unsigned int        dofs_per_cell = fe.dofs_per_cell;
+    const unsigned int        n_q_points    = quadrature_formula.size();
+    FullMatrix<double>        cell_matrix (dofs_per_cell, dofs_per_cell);
+    std::vector<types::global_dof_index> local_dof_indices (dofs_per_cell);
+    typename DoFHandler<dim>::active_cell_iterator
+      cell = dof_handler.begin_active(),
+      endc = dof_handler.end();
+    for (; cell!=endc; ++cell)
+      {
+        fe_values.reinit (cell);
+        cell_matrix = 0;
+        for (unsigned int q_point=0; q_point<n_q_points; ++q_point)
+          for (unsigned int i=0; i<dofs_per_cell; ++i)
+            cell_matrix(i,i) += (fe_values.shape_value (i, q_point) *
+                                 fe_values.shape_value (i, q_point) *
+                                 fe_values.JxW (q_point));
+        cell->get_dof_indices(local_dof_indices);
+        constraints.distribute_local_to_global (cell_matrix,
+                                                local_dof_indices,
+                                                mass_matrix);
+    }  // end cell loop
+  }  // EOM
+
 
 }  // end of namespace

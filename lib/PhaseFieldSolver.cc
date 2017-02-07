@@ -159,7 +159,7 @@ namespace phase_field
                             update_JxW_values);
     const unsigned int dofs_per_cell   = fe.dofs_per_cell;
     const unsigned int n_q_points      = quadrature_formula.size();
-    // FullMatrix<double>   local_matrix(dofs_per_cell, dofs_per_cell);
+    FullMatrix<double>   local_matrix(dofs_per_cell, dofs_per_cell);
     Vector<double>       local_rhs(dofs_per_cell);
     std::vector<types::global_dof_index> local_dof_indices(dofs_per_cell);
 
@@ -169,9 +169,10 @@ namespace phase_field
     SymmetricTensor<2,dim>	eps_u_i;
 
     // store solution displacement gradients
-    std::vector< SymmetricTensor<2,dim> > strain_tensor(n_q_points);
+    std::vector< SymmetricTensor<2,dim> > strain_tensor_values(n_q_points);
     SymmetricTensor<2, dim> stress_tensor_plus, stress_tensor_minus;
-    Tensor<1, dim> grad_xi_phi_i;
+    SymmetricTensor<2, dim> sigma_u_plus_i, sigma_u_minus_i;
+    Tensor<1, dim> grad_xi_phi_i, grad_xi_phi_j;
     std::vector< Tensor<1, dim> > grad_phi_values(n_q_points);
     std::vector<double> phi_values(n_q_points),
                         old_phi_values(n_q_points),
@@ -184,13 +185,13 @@ namespace phase_field
     for (; cell!=endc; ++cell)
       if (cell->is_locally_owned())
         {
-          fe_values.reinit(cell);
           local_rhs = 0;
+          local_matrix = 0;
           // right_hand_side.value_list(fe_values.get_quadrature_points(),
           //                            rhs_values);
 
           fe_values[displacement].get_function_symmetric_gradients
-            (solution, strain_tensor);
+            (solution, strain_tensor_values);
           // get old phi solutions for extrapolation
           fe_values[phase_field].get_function_values(solution,
                                                      phi_values);
@@ -202,7 +203,7 @@ namespace phase_field
                                                         grad_phi_values);
 
           for (unsigned int q=0; q<n_q_points; ++q) {
-            get_stress_decomposition(strain_tensor[q],
+            get_stress_decomposition(strain_tensor_values[q],
                                      stress_tensor_plus,
                                      stress_tensor_minus);
             // TODO: include time into here
@@ -226,13 +227,24 @@ namespace phase_field
                    ((1 - kappa)*phi_e*phi_e + kappa)*(stress_tensor_plus*eps_u_i)
                   + (stress_tensor_minus*eps_u_i)
                   +
-                  (1 - kappa)*phi*(stress_tensor_plus*strain_tensor[q])*xi_phi_i
+                  (1 - kappa)*phi*(stress_tensor_plus*strain_tensor_values[q])*xi_phi_i
                   + gamma_c*(-1/e*(1 - phi)*xi_phi_i +
                              e*contract(grad_phi_values[q], grad_xi_phi_i))
                    ) * jxw;
 
                 // Find eps_plus_du, sigma_plus_du, and sigma_minus_du
+                get_stress_decomposition_du(strain_tensor_values[q], eps_u_i,
+                                            sigma_u_plus_i, sigma_u_minus_i);
 
+                // Assemble local matrix
+                for (unsigned int j=0; j<dofs_per_cell; ++j)
+                  {
+                    double xi_phi_j = fe_values[phase_field].value(j ,q);
+                    grad_xi_phi_j = fe_values[phase_field].gradient(j, q);
+
+                    local_matrix(i, j) += 0;
+
+                  }  // end j loop
 
               }  // end i loop
 
@@ -271,6 +283,100 @@ namespace phase_field
    SymmetricTensor<2,dim>       &sigma_u_plus_i,
    SymmetricTensor<2,dim>       &sigma_u_minus_i)
   {
+    Tensor<2,dim> p_matrix, lambda_matrix, p_matrix_du, lambda_matrix_du;
+    double trace_eps = trace(strain_tensor);
+    double det_eps = determinant(strain_tensor);
+    double lambda_1 = trace_eps/2 + sqrt(trace_eps*trace_eps/4 - det_eps);
+    double lambda_2 = trace_eps/2 - sqrt(trace_eps*trace_eps/4 - det_eps);
+
+    lambda_matrix[0][0] = lambda_1;
+    lambda_matrix[0][1] = 0;
+    lambda_matrix[1][0] = 0;
+    lambda_matrix[1][1] = lambda_2;
+
+    // compute lambda_1_du and lambda_2_du
+    double lambda_1_du = trace(eps_u_i)/2 +
+      0.5/sqrt(trace_eps*trace_eps/4 - det_eps) *
+      (eps_u_i[0][1]*strain_tensor[1][0] + strain_tensor[0][1]*eps_u_i[1][0] +
+       0.5*(strain_tensor[0][0] - strain_tensor[1][1])*(eps_u_i[0][0] - eps_u_i[1][1]));
+    double lambda_2_du = trace(eps_u_i)/2 -
+      0.5/sqrt(trace_eps*trace_eps/4 - det_eps) *
+      (eps_u_i[0][1]*strain_tensor[1][0] + strain_tensor[0][1]*eps_u_i[1][0] +
+       0.5*(strain_tensor[0][0] - strain_tensor[1][1])*(eps_u_i[0][0] - eps_u_i[1][1]));
+
+    if (lambda_1 > 0)
+      lambda_matrix_du[0][0] = lambda_1_du;
+    else
+      lambda_matrix_du[0][0] = 0;
+    lambda_matrix_du[0][1] = 0;
+    lambda_matrix_du[1][0] = 0;
+    if (lambda_2 > 0)
+      lambda_matrix_du[1][1] = lambda_2_du;
+    else
+      lambda_matrix_du[1][1] = 0;
+
+    double eps_12 = strain_tensor[0][1];
+    double tmp, tmp1, tmp2;
+
+    // compute v1 and its derivative
+    if (eps_12 == 0) tmp = 0;
+    else tmp = (lambda_1 - strain_tensor[0][0])/strain_tensor[0][1];
+    // double v1_norm = sqrt(1 + tmp*tmp);
+    p_matrix[0][0] = 1./sqrt(1 + tmp*tmp);
+    p_matrix[1][0] = tmp/sqrt(1 + tmp*tmp);
+    // derivative
+    if (eps_12 == 0)
+      {
+        tmp1 = 0;
+        tmp2 = 0;
+      }
+    else
+      {
+        tmp2 =
+          ((lambda_1_du - eps_u_i[0][0])*strain_tensor[0][1] -
+           (lambda_1 - strain_tensor[0][0])*eps_u_i[0][1])/(eps_12*eps_12);
+        tmp1 = -1/(1+tmp*tmp) * 1/(2*sqrt(tmp*tmp)) * 2*tmp * tmp2;
+      }
+
+    p_matrix_du[0][0] = tmp1;
+    p_matrix_du[1][0] = tmp*tmp1 + tmp2;
+
+    // Now compute vector v2 and it's derivative
+    if (eps_12 == 0) tmp = 0;
+    else tmp = (lambda_2 - strain_tensor[0][0])/eps_12;
+    p_matrix[0][1] = 1./sqrt(1 + tmp*tmp);
+    p_matrix[1][1] = tmp/sqrt(1 + tmp*tmp);
+
+    if (eps_12 == 0)
+      {
+        tmp1 = 0;
+        tmp2 = 0;
+      }
+    else
+      {
+        tmp2 =
+          ((lambda_2_du - eps_u_i[0][0])*eps_12 -
+           (lambda_2 - strain_tensor[0][0])*eps_12)/(eps_12*eps_12);
+        tmp1 = -1/(1+tmp*tmp) * 1/(2*sqrt(tmp*tmp)) * 2*tmp * tmp2;
+      }
+
+    p_matrix_du[0][1] = tmp1;
+    p_matrix_du[1][1] = tmp*tmp1 + tmp2;
+
+    // Compute eps_plus_u_i, sigma_plus_u_i, and sigma_minus_u_i
+    Tensor<2,dim> eps_u_plus_i =
+      (p_matrix_du*(lambda_matrix*transpose(p_matrix))) +
+      (p_matrix*(lambda_matrix_du*transpose(p_matrix))) +
+      (p_matrix*(lambda_matrix*transpose(p_matrix_du)));
+
+    double trace_eps_u_i = std::max(0.0, trace(eps_u_i));
+    sigma_u_plus_i = 2*mu*eps_u_plus_i;
+    sigma_u_plus_i[0][0] += lambda*trace_eps_u_i;
+    sigma_u_plus_i[1][1] += lambda*trace_eps_u_i;
+
+    sigma_u_minus_i = 2*mu*(eps_u_i - eps_u_plus_i);
+    sigma_u_minus_i[0][0] += lambda*(trace_eps - trace_eps_u_i);
+    sigma_u_minus_i[1][1] += lambda*(trace_eps - trace_eps_u_i);
 
   }  // EOM
 

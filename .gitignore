@@ -1,4 +1,8 @@
 lib/CMakeFiles/*
 Makefile
-*spw
+CMakeFiles/*
+*swp
 pds
+lib/liblib.a
+*Cache.txt
+*.cmake

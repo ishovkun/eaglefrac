@@ -1,25 +1,3 @@
-##
-#  CMake script for the step-40 tutorial program:
-##
-
-# Set the name of the project and target:
-SET(TARGET "pds")
-
-# Declare all source files the target consists of. Here, this is only
-# the one step-X.cc file, but as you expand your project you may wish
-# to add other source files as well. If your project becomes much larger,
-# you may want to either replace the following statement by something like
-#  FILE(GLOB_RECURSE TARGET_SRC  "source/*.cc")
-#  FILE(GLOB_RECURSE TARGET_INC  "include/*.h")
-#  SET(TARGET_SRC ${TARGET_SRC}  ${TARGET_INC})
-# or switch altogether to the large project CMakeLists.txt file discussed
-# in the "CMake in user projects" page accessible from the "User info"
-# page of the documentation.
-SET(TARGET_SRC
-  ${TARGET}.cc
-  )
-
-# Usually, you will not need to modify anything beyond this point...
 
 CMAKE_MINIMUM_REQUIRED(VERSION 2.8.8)
 
@@ -34,9 +12,7 @@ IF(NOT ${deal.II_FOUND})
     )
 ENDIF()
 
-#
-# Are all dependencies fulfilled?
-#
+
 IF(NOT (DEAL_II_WITH_PETSC OR DEAL_II_WITH_TRILINOS) OR NOT DEAL_II_WITH_P4EST)
   MESSAGE(FATAL_ERROR "
 Error! The deal.II library found at ${DEAL_II_PATH} was not configured with
@@ -51,5 +27,13 @@ ENDIF()
 
 DEAL_II_INITIALIZE_CACHED_VARIABLES()
 #SET(CLEAN_UP_FILES *.log *.gmv *.gnuplot *.gpl *.eps *.pov *.vtk *.ucd *.d2 *.vtu *.pvtu)
-PROJECT(${TARGET})
-DEAL_II_INVOKE_AUTOPILOT()
+PROJECT(ipds)
+
+INCLUDE_DIRECTORIES(${CMAKE_SOURCE_DIR}/lib)
+ADD_SUBDIRECTORY(lib)
+
+ADD_EXECUTABLE(pds ${CMAKE_SOURCE_DIR}/pds.cc)
+DEAL_II_SETUP_TARGET(pds)
+
+TARGET_LINK_LIBRARIES(pds lib)
+# DEAL_II_INVOKE_AUTOPILOT()

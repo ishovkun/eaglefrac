@@ -31,6 +31,7 @@ namespace phase_field
 
 
   const double mu = 1000, lambda = 1e6;
+  const double kappa = 1e-12, gamma_c = 1, e = 1e-6;
 
   template <int dim>
   class PhaseFieldSolver
@@ -58,6 +59,10 @@ namespace phase_field
     void get_stress_decomposition(const SymmetricTensor<2,dim> &strain_tensor,
                                   SymmetricTensor<2,dim>       &stress_tensor_plus,
                                   SymmetricTensor<2,dim>       &stress_tensor_minus);
+    void get_stress_decomposition_du (const SymmetricTensor<2,dim> &strain_tensor,
+                                      const SymmetricTensor<2,dim> &eps_u_i,
+                                      SymmetricTensor<2,dim>       &sigma_u_plus_i,
+                                      SymmetricTensor<2,dim>       &sigma_u_minus_i);
     // variables
     MPI_Comm &mpi_communicator;
     DoFHandler<dim> dof_handler;
@@ -161,13 +166,15 @@ namespace phase_field
     const FEValuesExtractors::Vector displacement(0);
     const FEValuesExtractors::Scalar phase_field(dim);
 
-    SymmetricTensor<2,dim>	eps_i;
+    SymmetricTensor<2,dim>	eps_u_i;
 
     // store solution displacement gradients
     std::vector< SymmetricTensor<2,dim> > strain_tensor(n_q_points);
     SymmetricTensor<2, dim> stress_tensor_plus, stress_tensor_minus;
     Tensor<1, dim> grad_xi_phi_i;
-    std::vector<double> old_phi_values(n_q_points),
+    std::vector< Tensor<1, dim> > grad_phi_values(n_q_points);
+    std::vector<double> phi_values(n_q_points),
+                        old_phi_values(n_q_points),
                         old_old_phi_values(n_q_points);
 
     typename DoFHandler<dim>::active_cell_iterator
@@ -185,29 +192,46 @@ namespace phase_field
           fe_values[displacement].get_function_symmetric_gradients
             (solution, strain_tensor);
           // get old phi solutions for extrapolation
+          fe_values[phase_field].get_function_values(solution,
+                                                     phi_values);
           fe_values[phase_field].get_function_values(old_solution,
                                                      old_phi_values);
           fe_values[phase_field].get_function_values(old_old_solution,
                                                      old_old_phi_values);
+          fe_values[phase_field].get_function_gradients(solution,
+                                                        grad_phi_values);
 
           for (unsigned int q=0; q<n_q_points; ++q) {
             get_stress_decomposition(strain_tensor[q],
                                      stress_tensor_plus,
                                      stress_tensor_minus);
-
-            // for (unsigned int k=0; k<dofs_per_cell; ++k) {
-            //   strain_tensor =
-            // }
+            // TODO: include time into here
+            double d_phi = old_phi_values[q] - old_old_phi_values[q];
+            double phi_e = old_phi_values[q] + d_phi;  // extrapolated
+            double phi = phi_values[q];
+            double jxw = fe_values.JxW(q);
 
             for (unsigned int i=0; i<dofs_per_cell; ++i)
               {
-                eps_i = fe_values[displacement].symmetric_gradient(i, q);
+                eps_u_i = fe_values[displacement].symmetric_gradient(i, q);
 
                 // that's for the pressure term, don't remove it
                 // double div_phi_i = fe_values[displacement].divergence(i, q);
 
                 double xi_phi_i = fe_values[phase_field].value(i ,q);
                 grad_xi_phi_i = fe_values[phase_field].gradient(i, q);
+
+                local_rhs[i] +=
+                  (
+                   ((1 - kappa)*phi_e*phi_e + kappa)*(stress_tensor_plus*eps_u_i)
+                  + (stress_tensor_minus*eps_u_i)
+                  +
+                  (1 - kappa)*phi*(stress_tensor_plus*strain_tensor[q])*xi_phi_i
+                  + gamma_c*(-1/e*(1 - phi)*xi_phi_i +
+                             e*contract(grad_phi_values[q], grad_xi_phi_i))
+                   ) * jxw;
+
+                // Find eps_plus_du, sigma_plus_du, and sigma_minus_du
 
 
               }  // end i loop
@@ -237,7 +261,17 @@ namespace phase_field
     stress_tensor_minus = 2*mu*(strain_tensor - strain_tensor_plus);
     stress_tensor_minus[0][0] += lambda*(trace_eps - trace_eps_pos);
     stress_tensor_minus[1][1] += lambda*(trace_eps - trace_eps_pos);
-  }
+  }  // EOM
 
+
+  template <int dim>
+  void PhaseFieldSolver<dim>::get_stress_decomposition_du
+  (const SymmetricTensor<2,dim> &strain_tensor,
+   const SymmetricTensor<2,dim> &eps_u_i,
+   SymmetricTensor<2,dim>       &sigma_u_plus_i,
+   SymmetricTensor<2,dim>       &sigma_u_minus_i)
+  {
+
+  }  // EOM
 
 }  // end of namespace

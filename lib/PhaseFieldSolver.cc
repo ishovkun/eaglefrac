@@ -46,8 +46,7 @@ namespace phase_field
 
     void setup_dofs();
     void compute_residual();
-    void assemble_rhs_vector();
-    void assemble_system_matrix();
+    void assemble_system();
 
     // variables
     TrilinosWrappers::MPI::Vector residual, rhs_vector, solution, solution_update,
@@ -148,7 +147,7 @@ namespace phase_field
 
 
   template <int dim>
-  void PhaseFieldSolver<dim>::assemble_rhs_vector()
+  void PhaseFieldSolver<dim>::assemble_system()
   {
     TimerOutput::Scope t(computing_timer, "assemble rhs vector");
 
@@ -166,7 +165,7 @@ namespace phase_field
     const FEValuesExtractors::Vector displacement(0);
     const FEValuesExtractors::Scalar phase_field(dim);
 
-    SymmetricTensor<2,dim>	eps_u_i;
+    SymmetricTensor<2,dim>	eps_u_i, eps_u_j;
 
     // store solution displacement gradients
     std::vector< SymmetricTensor<2,dim> > strain_tensor_values(n_q_points);
@@ -187,11 +186,12 @@ namespace phase_field
         {
           local_rhs = 0;
           local_matrix = 0;
+          fe_values.reinit(cell);
           // right_hand_side.value_list(fe_values.get_quadrature_points(),
           //                            rhs_values);
-
           fe_values[displacement].get_function_symmetric_gradients
             (solution, strain_tensor_values);
+
           // get old phi solutions for extrapolation
           fe_values[phase_field].get_function_values(solution,
                                                      phi_values);
@@ -229,7 +229,7 @@ namespace phase_field
                   +
                   (1 - kappa)*phi*(stress_tensor_plus*strain_tensor_values[q])*xi_phi_i
                   + gamma_c*(-1/e*(1 - phi)*xi_phi_i +
-                             e*contract(grad_phi_values[q], grad_xi_phi_i))
+                             e*(grad_phi_values[q]*grad_xi_phi_i))
                    ) * jxw;
 
                 // Find eps_plus_du, sigma_plus_du, and sigma_minus_du
@@ -241,14 +241,34 @@ namespace phase_field
                   {
                     double xi_phi_j = fe_values[phase_field].value(j ,q);
                     grad_xi_phi_j = fe_values[phase_field].gradient(j, q);
+                    eps_u_j = fe_values[displacement].symmetric_gradient(j, q);
 
-                    local_matrix(i, j) += 0;
+                    local_matrix(i, j) +=
+                      (
+                       ((1-kappa)*phi_e*phi_e + kappa)*(sigma_u_plus_i*eps_u_j)
+                       +
+                       (sigma_u_minus_i*eps_u_j)
+                       +
+                       (1-kappa)*xi_phi_j*
+                       (xi_phi_i*(stress_tensor_plus*strain_tensor_values[q]) +
+                        2*phi*sigma_u_plus_i*strain_tensor_values[q])
+                       +
+                       gamma_c*(1/e*xi_phi_i*xi_phi_j +
+                                e*grad_xi_phi_i*grad_xi_phi_j)
+                      ) * jxw;
 
                   }  // end j loop
 
               }  // end i loop
 
           }  // end q loop
+          cell->get_dof_indices(local_dof_indices);
+          constraints.distribute_local_to_global(local_matrix,
+                                                 local_rhs,
+                                                 local_dof_indices,
+                                                 system_matrix,
+                                                 rhs_vector,
+                                                 true);
           break;
         }  // end of cell loop
 

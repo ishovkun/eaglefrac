@@ -100,6 +100,7 @@ namespace pds_solid
     create_mesh();
     phase_field_solver.setup_dofs();
     phase_field_solver.assemble_system();
+    phase_field_solver.compute_active_set();
   }
 
 

@@ -32,6 +32,7 @@ namespace phase_field
 
   const double mu = 1000, lambda = 1e6;
   const double kappa = 1e-12, gamma_c = 1, e = 1e-6;
+  const double penalty_parameter = 100;
 
   template <int dim>
   class PhaseFieldSolver
@@ -47,12 +48,18 @@ namespace phase_field
     void setup_dofs();
     void compute_residual();
     void assemble_system();
+    void compute_active_set();
 
     // variables
-    TrilinosWrappers::MPI::Vector residual, rhs_vector, solution, solution_update,
+    TrilinosWrappers::MPI::Vector rhs_vector, solution, solution_update,
       old_solution, old_old_solution;
+    TrilinosWrappers::MPI::Vector residual;
     TrilinosWrappers::SparseMatrix system_matrix;
-    ConstraintMatrix constraints;
+
+    // Two constraints objects:
+    // the first to impose hanging node constraints + BC's
+    // The second for the same + active set constraints
+    ConstraintMatrix physical_constraints, all_constraints;
 
   private:
     void get_stress_decomposition(const SymmetricTensor<2,dim> &strain_tensor,
@@ -117,18 +124,25 @@ namespace phase_field
     locally_owned_dofs = dof_handler.locally_owned_dofs();
     DoFTools::extract_locally_relevant_dofs(dof_handler,
                                             locally_relevant_dofs);
+    physical_constraints.clear();
+    all_constraints.clear();
 
     // TODO: constraints only on the displacement part
     // VectorTools::interpolate_boundary_values(dof_handler,
     //                                          0,
     //                                          ZeroFunction<dim>(),
-    //                                          constraints);
-    constraints.close();
+    //                                          physical_constraints);
+    // VectorTools::interpolate_boundary_values(dof_handler,
+    //                                          0,
+    //                                          ZeroFunction<dim>(),
+    //                                          all_constraints);
+    // Don't close all constraints yet since we'll need to add active set
+    physical_constraints.close();
 
     DynamicSparsityPattern dsp(dof_handler.n_dofs());
     DoFTools::make_sparsity_pattern(dof_handler,
                                     dsp,
-                                    constraints,
+                                    physical_constraints,
                                     false);
     system_matrix.reinit(dsp);
     reduced_system_matrix.reinit(dsp);
@@ -136,7 +150,9 @@ namespace phase_field
     solution.reinit(solution_index_set, mpi_communicator);
     old_solution.reinit(solution_index_set, mpi_communicator);
     old_old_solution.reinit(solution_index_set, mpi_communicator);
+    solution_update.reinit(solution_index_set, mpi_communicator);
     rhs_vector.reinit(solution_index_set, mpi_communicator);
+    residual.reinit(solution_index_set, mpi_communicator);
 
     // TODO:
     // Add some stuff to make mass matrix B and reinitialize reduced system
@@ -267,7 +283,7 @@ namespace phase_field
 
           }  // end q loop
           cell->get_dof_indices(local_dof_indices);
-          constraints.distribute_local_to_global(local_matrix,
+          physical_constraints.distribute_local_to_global(local_matrix,
                                                  local_rhs,
                                                  local_dof_indices,
                                                  system_matrix,
@@ -432,11 +448,35 @@ namespace phase_field
                                  fe_values.shape_value (i, q_point) *
                                  fe_values.JxW (q_point));
         cell->get_dof_indices(local_dof_indices);
-        constraints.distribute_local_to_global (cell_matrix,
-                                                local_dof_indices,
-                                                mass_matrix);
+        physical_constraints.distribute_local_to_global(cell_matrix,
+                                                        local_dof_indices,
+                                                        mass_matrix);
     }  // end cell loop
   }  // EOM
 
+
+  template <int dim>
+  void PhaseFieldSolver<dim>::
+  compute_active_set()
+  {
+    TimerOutput::Scope t(computing_timer, "Computing active set");
+    active_set.clear();
+
+    for (unsigned int i=0; i< residual.size(); ++i)
+      {
+        if (residual[i]/mass_matrix_diagonal[i] +
+            penalty_parameter*solution_update[i] > 0)
+          {
+            active_set.add_index(i);
+            all_constraints.add_line(i);
+            all_constraints.set_inhomogeneity(i, 0);
+            solution_update[i] = 0;
+            residual[i] = 0;
+          }
+      }  // end of dof loop
+    // std::cout << "   Reduced Residual: "
+    //           << residual.l2_norm()
+    //           << std::endl;
+  }  // EOM
 
 }  // end of namespace

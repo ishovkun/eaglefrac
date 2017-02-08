@@ -100,8 +100,8 @@ namespace phase_field
     dof_handler(triangulation),
     pcout(pcout_),
     computing_timer(computing_timer_),
-    // displacement components + phase_field var
-    fe(FE_Q<dim>(1), dim+1)
+    fe(FE_Q<dim>(1), dim,  // displacement components
+       FE_Q<dim>(1), 1)    // phase-field
   {
     pcout << "Solver class initialization successful" << std::endl;
   }  // EOM
@@ -124,7 +124,9 @@ namespace phase_field
     DoFTools::extract_locally_relevant_dofs(dof_handler,
                                             locally_relevant_dofs);
     physical_constraints.clear();
-
+    DoFTools::make_hanging_node_constraints(dof_handler,
+                                            physical_constraints);
+    // impose dirichlet conditions
     FEValuesExtractors::Vector displacement(0);
     ComponentMask mask = fe.component_mask(displacement);
     // TODO: constraints only on the displacement part
@@ -133,7 +135,6 @@ namespace phase_field
                                              ZeroFunction<dim>(dim+1),
                                              physical_constraints,
                                              mask);
-    // Don't close all constraints yet since we'll need to add active set
     physical_constraints.close();
 
     all_constraints.clear();

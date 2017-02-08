@@ -32,7 +32,7 @@ namespace phase_field
 
   const double mu = 1000, lambda = 1e6;
   const double kappa = 1e-12, gamma_c = 1, e = 1e-6;
-  const double penalty_parameter = 100;
+  const double penalty_parameter = 1;
 
   template <int dim>
   class PhaseFieldSolver
@@ -125,15 +125,14 @@ namespace phase_field
                                             locally_relevant_dofs);
     physical_constraints.clear();
 
+    FEValuesExtractors::Vector displacement(0);
+    ComponentMask mask = fe.component_mask(displacement);
     // TODO: constraints only on the displacement part
-    // VectorTools::interpolate_boundary_values(dof_handler,
-    //                                          0,
-    //                                          ZeroFunction<dim>(),
-    //                                          physical_constraints);
-    // VectorTools::interpolate_boundary_values(dof_handler,
-    //                                          0,
-    //                                          ZeroFunction<dim>(),
-    //                                          all_constraints);
+    VectorTools::interpolate_boundary_values(dof_handler,
+                                             0,
+                                             ZeroFunction<dim>(dim+1),
+                                             physical_constraints,
+                                             mask);
     // Don't close all constraints yet since we'll need to add active set
     physical_constraints.close();
 

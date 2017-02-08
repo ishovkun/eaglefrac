@@ -51,10 +51,10 @@ namespace phase_field
     void compute_active_set();
 
     // variables
-    TrilinosWrappers::MPI::Vector rhs_vector, solution, solution_update,
-      old_solution, old_old_solution;
-    TrilinosWrappers::MPI::Vector residual;
-    TrilinosWrappers::SparseMatrix system_matrix;
+    TrilinosWrappers::MPI::Vector solution, solution_update,
+                                  old_solution, old_old_solution;
+    TrilinosWrappers::MPI::Vector residual, rhs_vector, reduced_rhs_vector;
+    TrilinosWrappers::SparseMatrix system_matrix, reduced_system_matrix;
 
     // Two constraints objects:
     // the first to impose hanging node constraints + BC's
@@ -80,7 +80,6 @@ namespace phase_field
     FESystem<dim> fe;
     IndexSet locally_owned_dofs, locally_relevant_dofs;
     IndexSet active_set;
-    TrilinosWrappers::SparseMatrix reduced_system_matrix;
     TrilinosWrappers::MPI::Vector mass_matrix_diagonal;
 
 
@@ -125,7 +124,6 @@ namespace phase_field
     DoFTools::extract_locally_relevant_dofs(dof_handler,
                                             locally_relevant_dofs);
     physical_constraints.clear();
-    all_constraints.clear();
 
     // TODO: constraints only on the displacement part
     // VectorTools::interpolate_boundary_values(dof_handler,
@@ -138,6 +136,10 @@ namespace phase_field
     //                                          all_constraints);
     // Don't close all constraints yet since we'll need to add active set
     physical_constraints.close();
+
+    all_constraints.clear();
+    all_constraints.merge(physical_constraints);
+    all_constraints.close();
 
     DynamicSparsityPattern dsp(dof_handler.n_dofs());
     DoFTools::make_sparsity_pattern(dof_handler,
@@ -152,6 +154,7 @@ namespace phase_field
     old_old_solution.reinit(solution_index_set, mpi_communicator);
     solution_update.reinit(solution_index_set, mpi_communicator);
     rhs_vector.reinit(solution_index_set, mpi_communicator);
+    reduced_rhs_vector.reinit(solution_index_set, mpi_communicator);
     residual.reinit(solution_index_set, mpi_communicator);
 
     // TODO:
@@ -289,16 +292,23 @@ namespace phase_field
                                                  system_matrix,
                                                  rhs_vector,
                                                  true);
+
+          all_constraints.distribute_local_to_global(local_matrix,
+                                                     local_rhs,
+                                                     local_dof_indices,
+                                                     reduced_system_matrix,
+                                                     reduced_rhs_vector,
+                                                     true);
         }  // end of cell loop
 
   } // EOM
 
 
   template <int dim>
-  void PhaseFieldSolver<dim>::get_stress_decomposition
-  (const  SymmetricTensor<2,dim> &strain_tensor,
-   SymmetricTensor<2,dim>        &stress_tensor_plus,
-   SymmetricTensor<2,dim>        &stress_tensor_minus)
+  void PhaseFieldSolver<dim>::
+  get_stress_decomposition (const  SymmetricTensor<2,dim> &strain_tensor,
+                            SymmetricTensor<2,dim>        &stress_tensor_plus,
+                            SymmetricTensor<2,dim>        &stress_tensor_minus)
   {
     SymmetricTensor<2,dim> strain_tensor_plus;
     constitutive_model::get_strain_tensor_plus(strain_tensor,
@@ -316,11 +326,11 @@ namespace phase_field
 
 
   template <int dim>
-  void PhaseFieldSolver<dim>::get_stress_decomposition_du
-  (const SymmetricTensor<2,dim> &strain_tensor,
-   const SymmetricTensor<2,dim> &eps_u_i,
-   SymmetricTensor<2,dim>       &sigma_u_plus_i,
-   SymmetricTensor<2,dim>       &sigma_u_minus_i)
+  void PhaseFieldSolver<dim>::
+  get_stress_decomposition_du (const SymmetricTensor<2,dim> &strain_tensor,
+                               const SymmetricTensor<2,dim> &eps_u_i,
+                               SymmetricTensor<2,dim>       &sigma_u_plus_i,
+                               SymmetricTensor<2,dim>       &sigma_u_minus_i)
   {
     Tensor<2,dim> p_matrix, lambda_matrix, p_matrix_du, lambda_matrix_du;
     double trace_eps = trace(strain_tensor);
@@ -461,6 +471,7 @@ namespace phase_field
   {
     TimerOutput::Scope t(computing_timer, "Computing active set");
     active_set.clear();
+    all_constraints.clear();
 
     for (unsigned int i=0; i< residual.size(); ++i)
       {
@@ -474,6 +485,9 @@ namespace phase_field
             residual[i] = 0;
           }
       }  // end of dof loop
+
+    all_constraints.merge(physical_constraints);
+    all_constraints.close();
     // std::cout << "   Reduced Residual: "
     //           << residual.l2_norm()
     //           << std::endl;

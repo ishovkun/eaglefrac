@@ -47,12 +47,10 @@ namespace pds_solid
     pcout(std::cout,
           (Utilities::MPI::this_mpi_process(mpi_communicator)
            == 0)),
-    computing_timer(mpi_communicator,
-                    pcout,
+    computing_timer(mpi_communicator, pcout,
                     TimerOutput::summary,
                     TimerOutput::wall_times),
-    phase_field_solver(mpi_communicator,
-                       triangulation,
+    phase_field_solver(mpi_communicator, triangulation,
                        pcout, computing_timer)
   {
     pcout << "Problem initialization successful" << std::endl;
@@ -78,19 +76,14 @@ namespace pds_solid
 
     Point<dim> p1(point_1), p2(point_2);
 
-    GridGenerator::hyper_rectangle
-      (triangulation, p1, p2,
-       /*colorize = */ true);
+    // GridGenerator::hyper_rectangle
+    //   (triangulation, p1, p2,
+    //    /*colorize = */ true);
+    GridGenerator::hyper_cube(triangulation);
+    // triangulation.set_all_manifold_ids(0);
 
     int initial_refinement_level = 4;
     triangulation.refine_global(initial_refinement_level);
-  }
-
-
-  template <int dim>
-  void PDSSolid<dim>::setup_dofs()
-  {
-    phase_field_solver.setup_dofs();
   }
 
 
@@ -99,8 +92,8 @@ namespace pds_solid
   {
     create_mesh();
     phase_field_solver.setup_dofs();
-    phase_field_solver.assemble_system();
-    phase_field_solver.compute_active_set();
+    // phase_field_solver.assemble_system();
+    // phase_field_solver.compute_active_set();
   }
 
 

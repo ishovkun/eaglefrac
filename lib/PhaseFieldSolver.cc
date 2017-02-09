@@ -2,23 +2,25 @@
 #include <deal.II/base/quadrature_lib.h>
 #include <deal.II/base/timer.h>
 #include <deal.II/base/function.h>
+
 #include <deal.II/lac/generic_linear_algebra.h>
+#include <deal.II/lac/solver_gmres.h>
 
+#include <deal.II/lac/trilinos_block_sparse_matrix.h>
+#include <deal.II/lac/trilinos_block_vector.h>
+// #include <deal.II/lac/trilinos_precondition.h>
 
-#include <deal.II/lac/vector.h>
-// #include <deal.II/lac/full_matrix.h>
-// #include <deal.II/lac/solver_cg.h>
-// #include <deal.II/lac/constraint_matrix.h>
-// #include <deal.II/lac/dynamic_sparsity_pattern.h>
-#include <deal.II/grid/tria_accessor.h>
-#include <deal.II/grid/tria_iterator.h>
+// #include <deal.II/grid/tria_accessor.h>
+// #include <deal.II/grid/tria_iterator.h>
+
+// DOF stuff
 #include <deal.II/dofs/dof_handler.h>
+#include <deal.II/dofs/dof_renumbering.h>
 #include <deal.II/dofs/dof_accessor.h>
 #include <deal.II/dofs/dof_tools.h>
+
 #include <deal.II/fe/fe_values.h>
 #include <deal.II/numerics/vector_tools.h>
-// #include <deal.II/numerics/data_out.h>
-// #include <deal.II/numerics/error_estimator.h>
 #include <deal.II/fe/fe_system.h>
 #include <deal.II/distributed/tria.h>
 
@@ -40,7 +42,7 @@ namespace phase_field
   public:
     // methods
     PhaseFieldSolver(MPI_Comm &mpi_communicator,
-                     parallel::distributed::Triangulation<dim> &triangulation,
+                     parallel::distributed::Triangulation<dim> &triangulation_,
                      ConditionalOStream &pcout_,
                      TimerOutput &computing_timer_);
     ~PhaseFieldSolver();
@@ -50,38 +52,37 @@ namespace phase_field
     void assemble_system();
     void compute_active_set();
 
-    // variables
-    TrilinosWrappers::MPI::Vector solution, solution_update,
-                                  old_solution, old_old_solution;
-    TrilinosWrappers::MPI::Vector residual, rhs_vector, reduced_rhs_vector;
-    TrilinosWrappers::SparseMatrix system_matrix, reduced_system_matrix;
-
-    // Two constraints objects:
-    // the first to impose hanging node constraints + BC's
-    // The second for the same + active set constraints
-    ConstraintMatrix physical_constraints, all_constraints;
-
   private:
     void get_stress_decomposition(const SymmetricTensor<2,dim> &strain_tensor,
                                   SymmetricTensor<2,dim>       &stress_tensor_plus,
                                   SymmetricTensor<2,dim>       &stress_tensor_minus);
-    void get_stress_decomposition_du (const SymmetricTensor<2,dim> &strain_tensor,
-                                      const SymmetricTensor<2,dim> &eps_u_i,
-                                      SymmetricTensor<2,dim>       &sigma_u_plus_i,
-                                      SymmetricTensor<2,dim>       &sigma_u_minus_i);
-    void assemble_mass_matrix_diagonal(TrilinosWrappers::SparseMatrix &mass_matrix);
+    void get_stress_decomposition_du(const SymmetricTensor<2,dim> &strain_tensor,
+                                     const SymmetricTensor<2,dim> &eps_u_i,
+                                     SymmetricTensor<2,dim>       &sigma_u_plus_i,
+                                     SymmetricTensor<2,dim>       &sigma_u_minus_i);
+    void assemble_mass_matrix_diagonal(TrilinosWrappers::
+                                       BlockSparseMatrix &mass_matrix);
 
     // variables
     MPI_Comm &mpi_communicator;
+    parallel::distributed::Triangulation<dim> &triangulation;
     DoFHandler<dim> dof_handler;
-    // parallel::distributed::Triangulation<dim> &triangulation;
     ConditionalOStream &pcout;
     TimerOutput &computing_timer;
+
     FESystem<dim> fe;
+
     IndexSet locally_owned_dofs, locally_relevant_dofs;
     IndexSet active_set;
-    TrilinosWrappers::MPI::Vector mass_matrix_diagonal;
 
+    TrilinosWrappers::MPI::BlockVector solution, solution_update,
+                                       old_solution, old_old_solution;
+    TrilinosWrappers::MPI::BlockVector residual, rhs_vector, reduced_rhs_vector;
+    TrilinosWrappers::MPI::BlockVector mass_matrix_diagonal;
+
+    TrilinosWrappers::BlockSparseMatrix system_matrix, reduced_system_matrix;
+
+    ConstraintMatrix physical_constraints, all_constraints;
 
   public:
     double time_step;
@@ -92,12 +93,13 @@ namespace phase_field
   template <int dim>
   PhaseFieldSolver<dim>::PhaseFieldSolver
   (MPI_Comm &mpi_communicator_,
-   parallel::distributed::Triangulation<dim> &triangulation,
+   parallel::distributed::Triangulation<dim> &triangulation_,
    ConditionalOStream &pcout_,
    TimerOutput &computing_timer_)
     :
     mpi_communicator(mpi_communicator_),
-    dof_handler(triangulation),
+    triangulation(triangulation_),
+    dof_handler(triangulation_),
     pcout(pcout_),
     computing_timer(computing_timer_),
     fe(FE_Q<dim>(1), dim,  // displacement components
@@ -117,55 +119,125 @@ namespace phase_field
   template <int dim>
   void PhaseFieldSolver<dim>::setup_dofs()
   {
-    TimerOutput::Scope t(computing_timer, "setup");
+    computing_timer.enter_section("Setup system");
+
+    // Displacements in block 0
+    // phase-field in block 1
+    std::vector<unsigned int> blocks(dim+1, 0);
+    blocks[dim] = 1;
+
+    // distribute and renumber dofs
     dof_handler.distribute_dofs(fe);
-    active_set.set_size(dof_handler.n_dofs());
-    locally_owned_dofs = dof_handler.locally_owned_dofs();
-    DoFTools::extract_locally_relevant_dofs(dof_handler,
-                                            locally_relevant_dofs);
-    physical_constraints.clear();
-    DoFTools::make_hanging_node_constraints(dof_handler,
-                                            physical_constraints);
-    // impose dirichlet conditions
-    FEValuesExtractors::Vector displacement(0);
-    ComponentMask mask = fe.component_mask(displacement);
-    // TODO: constraints only on the displacement part
-    VectorTools::interpolate_boundary_values(dof_handler,
-                                             0,
-                                             ZeroFunction<dim>(dim+1),
-                                             physical_constraints,
-                                             mask);
-    physical_constraints.close();
+    DoFRenumbering::component_wise(dof_handler, blocks);
 
-    all_constraints.clear();
-    all_constraints.merge(physical_constraints);
-    all_constraints.close();
+    // Count dofs per block
+    std::vector<types::global_dof_index> dofs_per_block(2);
+    DoFTools::count_dofs_per_block(dof_handler, dofs_per_block, blocks);
+    const unsigned int n_u = dofs_per_block[0],
+                       n_phi = dofs_per_block[1];
 
-    DynamicSparsityPattern dsp(dof_handler.n_dofs());
-    DoFTools::make_sparsity_pattern(dof_handler,
-                                    dsp,
-                                    physical_constraints,
-                                    false);
-    system_matrix.reinit(dsp);
-    reduced_system_matrix.reinit(dsp);
-    IndexSet solution_index_set = dof_handler.locally_owned_dofs();
-    solution.reinit(solution_index_set, mpi_communicator);
-    old_solution.reinit(solution_index_set, mpi_communicator);
-    old_old_solution.reinit(solution_index_set, mpi_communicator);
-    solution_update.reinit(solution_index_set, mpi_communicator);
-    rhs_vector.reinit(solution_index_set, mpi_communicator);
-    reduced_rhs_vector.reinit(solution_index_set, mpi_communicator);
-    residual.reinit(solution_index_set, mpi_communicator);
+    pcout << "Number of active cells: "
+          << triangulation.n_global_active_cells()
+          << " (on "
+          << triangulation.n_levels()
+          << " levels)"
+          << std::endl
+          << "   Number of degrees of freedom: "
+          << dof_handler.n_dofs()
+          << " (" << n_u << '+' << n_phi << ')'
+          << std::endl;
 
-    // TODO:
-    // Add some stuff to make mass matrix B and reinitialize reduced system
-    // matrix, residual, and rhs
-    TrilinosWrappers::SparseMatrix mass_matrix;
-    mass_matrix.reinit(dsp);
+    // Partitioning
+    std::vector<IndexSet> partitioning, relevant_partitioning;
+    IndexSet relevant_set;
+    {
+      IndexSet local_set = dof_handler.locally_owned_dofs();
+      active_set.set_size(dof_handler.n_dofs());
+
+      partitioning.push_back(local_set.get_view(0, n_u));
+      partitioning.push_back(local_set.get_view(n_u, n_u+n_phi));
+
+      DoFTools::extract_locally_relevant_dofs(dof_handler, relevant_set);
+
+      relevant_partitioning.push_back(relevant_set.get_view(0, n_u));
+      relevant_partitioning.push_back(relevant_set.get_view(n_u, n_u + n_phi));
+    }
+
+    { // constraints
+      physical_constraints.clear();
+      physical_constraints.reinit(locally_relevant_dofs);
+      DoFTools::make_hanging_node_constraints(dof_handler,
+                                              physical_constraints);
+      // impose dirichlet conditions
+      FEValuesExtractors::Vector displacement(0);
+      ComponentMask mask = fe.component_mask(displacement);
+      // TODO: constraints the appropriate boundaries with right components
+      // VectorTools::interpolate_boundary_values(dof_handler,
+      //                                          0,
+      //                                          ZeroFunction<dim>(dim+1),
+      //                                          physical_constraints,
+      //                                          mask);
+      physical_constraints.close();
+
+      all_constraints.clear();
+      all_constraints.reinit(locally_relevant_dofs);
+      all_constraints.merge(physical_constraints);
+      all_constraints.close();
+    }
+
+    TrilinosWrappers::BlockSparsityPattern sp(partitioning, partitioning,
+                                              relevant_partitioning,
+                                              mpi_communicator);
+    { // Setup matrices
+      system_matrix.clear();
+      reduced_system_matrix.clear();
+
+      /*
+      Displacements are coupled with one another (upper-left block = true),
+      displacements are coupled with phase-field (lower-left block = true),
+      phase-field is not coupled with displacements (upper-right block = false),
+      phase-field is coupled with itself (lower-right block = true)
+      */
+      Table<2,DoFTools::Coupling> coupling(dim+1, dim+1);
+      for (unsigned int c=0; c<dim+1; ++c)
+        for (unsigned int d=0; d<dim+1; ++d)
+          if ((c<dim) || ((c==dim) && (d==dim)))
+            coupling[c][d] = DoFTools::always;
+          else
+            coupling[c][d] = DoFTools::none;
+
+      DoFTools::make_sparsity_pattern(dof_handler, coupling, sp,
+                                      physical_constraints,
+                                      /* 	keep_constrained_dofs = */ false,
+                                      Utilities::MPI::
+                                      this_mpi_process(mpi_communicator));
+      sp.compress();
+
+      system_matrix.reinit(sp);
+      reduced_system_matrix.reinit(sp);
+
+    }
+
+    { // Setup vectors
+      solution.reinit(partitioning, relevant_partitioning, mpi_communicator);
+      old_solution.reinit(solution);
+      old_old_solution.reinit(solution);
+      solution_update.reinit(solution);
+      rhs_vector.reinit(partitioning, relevant_partitioning,
+                        mpi_communicator, /* omit-zeros=*/ true);
+      residual.reinit(rhs_vector);
+    }
+
+    TrilinosWrappers::BlockSparseMatrix mass_matrix;
+    mass_matrix.reinit(sp);
+    // pcout << mass_matrix.n_nonzero_elements() << std::endl;
+    // pcout << mass_matrix(0, 0) << std::endl;
     assemble_mass_matrix_diagonal(mass_matrix);
-    mass_matrix_diagonal.reinit(solution_index_set);
-    for (unsigned int j=0; j<solution.size (); j++)
-      mass_matrix_diagonal(j) = mass_matrix.diag_element(j);
+    // mass_matrix_diagonal.reinit(partitioning, relevant_partitioning,
+    //                             mpi_communicator, /* omit-zeros=*/ true);
+    // for (unsigned int j=0; j<solution.size (); j++)
+    //   mass_matrix_diagonal(j) = mass_matrix.diag_element(j);
+
   }  // EOM
 
 
@@ -281,24 +353,22 @@ namespace phase_field
                       ) * jxw;
 
                   }  // end j loop
-
               }  // end i loop
-
           }  // end q loop
-          cell->get_dof_indices(local_dof_indices);
-          physical_constraints.distribute_local_to_global(local_matrix,
-                                                 local_rhs,
-                                                 local_dof_indices,
-                                                 system_matrix,
-                                                 rhs_vector,
-                                                 true);
 
-          all_constraints.distribute_local_to_global(local_matrix,
-                                                     local_rhs,
-                                                     local_dof_indices,
-                                                     reduced_system_matrix,
-                                                     reduced_rhs_vector,
-                                                     true);
+          cell->get_dof_indices(local_dof_indices);
+
+          physical_constraints.distribute_local_to_global(local_matrix,
+                                                          local_rhs,
+                                                          local_dof_indices,
+                                                          system_matrix,
+                                                          rhs_vector);
+
+          // all_constraints.distribute_local_to_global(local_matrix,
+          //                                            local_rhs,
+          //                                            local_dof_indices,
+          //                                            reduced_system_matrix,
+          //                                            reduced_rhs_vector);
         }  // end of cell loop
 
   } // EOM
@@ -432,65 +502,75 @@ namespace phase_field
 
   template <int dim>
   void PhaseFieldSolver<dim>::
-  assemble_mass_matrix_diagonal(TrilinosWrappers::SparseMatrix &mass_matrix)
+  assemble_mass_matrix_diagonal(TrilinosWrappers::
+                                BlockSparseMatrix &mass_matrix)
   {
     Assert (fe.degree == 1, ExcNotImplemented());
     TimerOutput::Scope t(computing_timer, "assemble mass matrix diagonal");
-    const QTrapez<dim>        quadrature_formula;
-    FEValues<dim>             fe_values (fe,
-                                         quadrature_formula,
-                                         update_values   |
-                                         update_JxW_values);
-    const unsigned int        dofs_per_cell = fe.dofs_per_cell;
-    const unsigned int        n_q_points    = quadrature_formula.size();
-    FullMatrix<double>        cell_matrix (dofs_per_cell, dofs_per_cell);
-    std::vector<types::global_dof_index> local_dof_indices (dofs_per_cell);
+    const QTrapez<dim> quadrature_formula;
+    FEValues<dim> fe_values (fe, quadrature_formula,
+                             update_quadrature_points |
+                             update_values |
+                             update_JxW_values);
+    const unsigned int dofs_per_cell = fe.dofs_per_cell;
+    const unsigned int n_q_points = quadrature_formula.size();
+    FullMatrix<double> cell_matrix(dofs_per_cell, dofs_per_cell);
+    std::vector<types::global_dof_index> local_dof_indices(dofs_per_cell);
+
     typename DoFHandler<dim>::active_cell_iterator
       cell = dof_handler.begin_active(),
       endc = dof_handler.end();
+
+    mass_matrix = 0;
+
     for (; cell!=endc; ++cell)
-      {
-        fe_values.reinit (cell);
-        cell_matrix = 0;
-        for (unsigned int q_point=0; q_point<n_q_points; ++q_point)
-          for (unsigned int i=0; i<dofs_per_cell; ++i)
-            cell_matrix(i,i) += (fe_values.shape_value (i, q_point) *
-                                 fe_values.shape_value (i, q_point) *
-                                 fe_values.JxW (q_point));
-        cell->get_dof_indices(local_dof_indices);
-        physical_constraints.distribute_local_to_global(cell_matrix,
-                                                        local_dof_indices,
-                                                        mass_matrix);
-    }  // end cell loop
+      if (cell->is_locally_owned())
+        {
+          fe_values.reinit(cell);
+          cell_matrix = 0;
+          for (unsigned int q_point=0; q_point<n_q_points; ++q_point)
+            for (unsigned int i=0; i<dofs_per_cell; ++i)
+              cell_matrix(i,i) += (fe_values.shape_value(i, q_point) *
+                                   fe_values.shape_value(i, q_point) *
+                                   fe_values.JxW(q_point));
+          cell->get_dof_indices(local_dof_indices);
+          physical_constraints.distribute_local_to_global(cell_matrix,
+                                                          local_dof_indices,
+                                                          mass_matrix);
+          // break;
+        }  // end cell loop
+
+    mass_matrix.compress(VectorOperation::add);
+
   }  // EOM
 
 
-  template <int dim>
-  void PhaseFieldSolver<dim>::
-  compute_active_set()
-  {
-    TimerOutput::Scope t(computing_timer, "Computing active set");
-    active_set.clear();
-    all_constraints.clear();
+//   template <int dim>
+//   void PhaseFieldSolver<dim>::
+//   compute_active_set()
+//   {
+//     TimerOutput::Scope t(computing_timer, "Computing active set");
+//     active_set.clear();
+//     all_constraints.clear();
 
-    for (unsigned int i=0; i< residual.size(); ++i)
-      {
-        if (residual[i]/mass_matrix_diagonal[i] +
-            penalty_parameter*solution_update[i] > 0)
-          {
-            active_set.add_index(i);
-            all_constraints.add_line(i);
-            all_constraints.set_inhomogeneity(i, 0);
-            solution_update[i] = 0;
-            residual[i] = 0;
-          }
-      }  // end of dof loop
+//     for (unsigned int i=0; i< residual.size(); ++i)
+//       {
+//         if (residual[i]/mass_matrix_diagonal[i] +
+//             penalty_parameter*solution_update[i] > 0)
+//           {
+//             active_set.add_index(i);
+//             all_constraints.add_line(i);
+//             all_constraints.set_inhomogeneity(i, 0);
+//             solution_update[i] = 0;
+//             residual[i] = 0;
+//           }
+//       }  // end of dof loop
 
-    all_constraints.merge(physical_constraints);
-    all_constraints.close();
-    // std::cout << "   Reduced Residual: "
-    //           << residual.l2_norm()
-    //           << std::endl;
-  }  // EOM
+//     all_constraints.merge(physical_constraints);
+//     all_constraints.close();
+//     // std::cout << "   Reduced Residual: "
+//     //           << residual.l2_norm()
+//     //           << std::endl;
+//   }  // EOM
 
 }  // end of namespace

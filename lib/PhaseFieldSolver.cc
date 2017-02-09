@@ -72,7 +72,7 @@ namespace phase_field
 
     FESystem<dim> fe;
 
-    IndexSet locally_owned_dofs, locally_relevant_dofs;
+    IndexSet locally_owned_dofs;
     IndexSet active_set;
 
     TrilinosWrappers::MPI::BlockVector solution, solution_update,
@@ -149,18 +149,19 @@ namespace phase_field
 
     // Partitioning
     std::vector<IndexSet> partitioning, relevant_partitioning;
-    IndexSet relevant_set;
+    IndexSet locally_relevant_dofs;
     {
-      IndexSet local_set = dof_handler.locally_owned_dofs();
-      active_set.set_size(dof_handler.n_dofs());
+      locally_owned_dofs = dof_handler.locally_owned_dofs();
+      active_set.set_size(dof_handler.n_locally_owned_dofs());
 
-      partitioning.push_back(local_set.get_view(0, n_u));
-      partitioning.push_back(local_set.get_view(n_u, n_u+n_phi));
+      partitioning.push_back(locally_owned_dofs.get_view(0, n_u));
+      partitioning.push_back(locally_owned_dofs.get_view(n_u, n_u+n_phi));
 
-      DoFTools::extract_locally_relevant_dofs(dof_handler, relevant_set);
+      DoFTools::extract_locally_relevant_dofs(dof_handler,
+                                              locally_relevant_dofs);
 
-      relevant_partitioning.push_back(relevant_set.get_view(0, n_u));
-      relevant_partitioning.push_back(relevant_set.get_view(n_u, n_u + n_phi));
+      relevant_partitioning.push_back(locally_relevant_dofs.get_view(0, n_u));
+      relevant_partitioning.push_back(locally_relevant_dofs.get_view(n_u, n_u + n_phi));
     }
 
     { // constraints
@@ -225,18 +226,26 @@ namespace phase_field
       solution_update.reinit(solution);
       rhs_vector.reinit(partitioning, relevant_partitioning,
                         mpi_communicator, /* omit-zeros=*/ true);
+      reduced_rhs_vector.reinit(partitioning, relevant_partitioning,
+                                mpi_communicator, /* omit-zeros=*/ true);
       residual.reinit(rhs_vector);
     }
 
+    // Finally assemble the diagonal of the mass matrix
     TrilinosWrappers::BlockSparseMatrix mass_matrix;
     mass_matrix.reinit(sp);
-    // pcout << mass_matrix.n_nonzero_elements() << std::endl;
-    // pcout << mass_matrix(0, 0) << std::endl;
     assemble_mass_matrix_diagonal(mass_matrix);
-    // mass_matrix_diagonal.reinit(partitioning, relevant_partitioning,
-    //                             mpi_communicator, /* omit-zeros=*/ true);
-    // for (unsigned int j=0; j<solution.size (); j++)
-    //   mass_matrix_diagonal(j) = mass_matrix.diag_element(j);
+    mass_matrix_diagonal.reinit(partitioning, relevant_partitioning,
+                                mpi_communicator, /* omit-zeros=*/ true);
+
+    IndexSet::ElementIterator
+      index = locally_owned_dofs.begin(),
+      end_index = locally_owned_dofs.end();
+    for (; index!=end_index; ++index)
+        mass_matrix_diagonal(*index) = mass_matrix.diag_element(*index);
+    mass_matrix_diagonal.compress(VectorOperation::insert);
+
+    // std::cout << "begin index " << *index << std::endl;
 
   }  // EOM
 
@@ -364,12 +373,17 @@ namespace phase_field
                                                           system_matrix,
                                                           rhs_vector);
 
-          // all_constraints.distribute_local_to_global(local_matrix,
-          //                                            local_rhs,
-          //                                            local_dof_indices,
-          //                                            reduced_system_matrix,
-          //                                            reduced_rhs_vector);
+          all_constraints.distribute_local_to_global(local_matrix,
+                                                     local_rhs,
+                                                     local_dof_indices,
+                                                     reduced_system_matrix,
+                                                     reduced_rhs_vector);
         }  // end of cell loop
+
+    system_matrix.compress(VectorOperation::add);
+    reduced_system_matrix.compress(VectorOperation::add);
+    rhs_vector.compress(VectorOperation::add);
+    reduced_rhs_vector.compress(VectorOperation::add);
 
   } // EOM
 
@@ -545,32 +559,38 @@ namespace phase_field
   }  // EOM
 
 
-//   template <int dim>
-//   void PhaseFieldSolver<dim>::
-//   compute_active_set()
-//   {
-//     TimerOutput::Scope t(computing_timer, "Computing active set");
-//     active_set.clear();
-//     all_constraints.clear();
+  template <int dim>
+  void PhaseFieldSolver<dim>::
+  compute_active_set()
+  {
+    computing_timer.enter_section("Computing active set");
+    active_set.clear();
+    all_constraints.clear();
 
-//     for (unsigned int i=0; i< residual.size(); ++i)
-//       {
-//         if (residual[i]/mass_matrix_diagonal[i] +
-//             penalty_parameter*solution_update[i] > 0)
-//           {
-//             active_set.add_index(i);
-//             all_constraints.add_line(i);
-//             all_constraints.set_inhomogeneity(i, 0);
-//             solution_update[i] = 0;
-//             residual[i] = 0;
-//           }
-//       }  // end of dof loop
+    // Iterator
+    IndexSet::ElementIterator
+      index = locally_owned_dofs.begin(),
+      end_index = locally_owned_dofs.end();
 
-//     all_constraints.merge(physical_constraints);
-//     all_constraints.close();
-//     // std::cout << "   Reduced Residual: "
-//     //           << residual.l2_norm()
-//     //           << std::endl;
-//   }  // EOM
+    for (; index!=end_index; ++index)
+      {
+        unsigned int i = *index;
+        if (residual[i]/mass_matrix_diagonal[i] +
+            penalty_parameter*solution_update[i] > 0)
+          {
+            active_set.add_index(i);
+            all_constraints.add_line(i);
+            all_constraints.set_inhomogeneity(i, 0);
+            solution_update[i] = 0;
+            residual[i] = 0;
+          }
+      }  // end of dof loop
+
+    all_constraints.merge(physical_constraints);
+    all_constraints.close();
+    // std::cout << "   Reduced Residual: "
+    //           << residual.l2_norm()
+    //           << std::endl;
+  }  // EOM
 
 }  // end of namespace

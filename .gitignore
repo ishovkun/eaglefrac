@@ -6,3 +6,4 @@ pds
 lib/liblib.a
 *Cache.txt
 *.cmake
+*.msh

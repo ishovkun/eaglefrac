@@ -14,6 +14,7 @@
 // #include <deal.II/grid/tria_iterator.h>
 
 // DOF stuff
+#include <deal.II/distributed/tria.h>
 #include <deal.II/dofs/dof_handler.h>
 #include <deal.II/dofs/dof_renumbering.h>
 #include <deal.II/dofs/dof_accessor.h>
@@ -22,10 +23,10 @@
 #include <deal.II/fe/fe_values.h>
 #include <deal.II/numerics/vector_tools.h>
 #include <deal.II/fe/fe_system.h>
-#include <deal.II/distributed/tria.h>
 
 // Custom modules
 #include <ConstitutiveModel.cc>
+#include <InputData.cc>
 
 namespace phase_field
 {
@@ -43,6 +44,7 @@ namespace phase_field
     // methods
     PhaseFieldSolver(MPI_Comm &mpi_communicator,
                      parallel::distributed::Triangulation<dim> &triangulation_,
+                     input_data::PhaseFieldData &data_,
                      ConditionalOStream &pcout_,
                      TimerOutput &computing_timer_);
     ~PhaseFieldSolver();
@@ -51,21 +53,16 @@ namespace phase_field
     void compute_residual();
     void assemble_system();
     void compute_active_set();
+    void impose_displacement(const std::vector<double> &displacement_values);
 
   private:
-    void get_stress_decomposition(const SymmetricTensor<2,dim> &strain_tensor,
-                                  SymmetricTensor<2,dim>       &stress_tensor_plus,
-                                  SymmetricTensor<2,dim>       &stress_tensor_minus);
-    void get_stress_decomposition_du(const SymmetricTensor<2,dim> &strain_tensor,
-                                     const SymmetricTensor<2,dim> &eps_u_i,
-                                     SymmetricTensor<2,dim>       &sigma_u_plus_i,
-                                     SymmetricTensor<2,dim>       &sigma_u_minus_i);
     void assemble_mass_matrix_diagonal(TrilinosWrappers::
                                        BlockSparseMatrix &mass_matrix);
 
     // variables
     MPI_Comm &mpi_communicator;
     parallel::distributed::Triangulation<dim> &triangulation;
+    input_data::PhaseFieldData &data;
     DoFHandler<dim> dof_handler;
     ConditionalOStream &pcout;
     TimerOutput &computing_timer;
@@ -94,19 +91,19 @@ namespace phase_field
   PhaseFieldSolver<dim>::PhaseFieldSolver
   (MPI_Comm &mpi_communicator_,
    parallel::distributed::Triangulation<dim> &triangulation_,
+   input_data::PhaseFieldData &data_,
    ConditionalOStream &pcout_,
    TimerOutput &computing_timer_)
     :
     mpi_communicator(mpi_communicator_),
     triangulation(triangulation_),
+    data(data_),
     dof_handler(triangulation_),
     pcout(pcout_),
     computing_timer(computing_timer_),
     fe(FE_Q<dim>(1), dim,  // displacement components
        FE_Q<dim>(1), 1)    // phase-field
-  {
-    pcout << "Solver class initialization successful" << std::endl;
-  }  // EOM
+  {}  // EOM
 
 
   template <int dim>
@@ -251,6 +248,16 @@ namespace phase_field
 
 
   template <int dim>
+  void convert_to_tensor(const SymmetricTensor<2, dim> &symm_tensor,
+                         Tensor<2, dim>                &tensor)
+  {
+    for (int i=0; i<dim; ++i)
+      for (int j=0; j<dim; ++j)
+        tensor[i][j] = symm_tensor[i][j];
+  }  // EOM
+
+
+  template <int dim>
   void PhaseFieldSolver<dim>::assemble_system()
   {
     TimerOutput::Scope t(computing_timer, "assemble system");
@@ -269,17 +276,21 @@ namespace phase_field
     const FEValuesExtractors::Vector displacement(0);
     const FEValuesExtractors::Scalar phase_field(dim);
 
-    SymmetricTensor<2,dim>	eps_u_i, eps_u_j;
 
-    // store solution displacement gradients
+    // FeValues containers
+    Tensor<2,dim>	eps_u_i, eps_u_j;
+    Tensor<1,dim> grad_xi_phi_i, grad_xi_phi_j;
+    std::vector< Tensor<1,dim> > grad_phi_values(n_q_points);
+    // Solution values containers
     std::vector< SymmetricTensor<2,dim> > strain_tensor_values(n_q_points);
-    SymmetricTensor<2, dim> stress_tensor_plus, stress_tensor_minus;
-    SymmetricTensor<2, dim> sigma_u_plus_i, sigma_u_minus_i;
-    Tensor<1, dim> grad_xi_phi_i, grad_xi_phi_j;
-    std::vector< Tensor<1, dim> > grad_phi_values(n_q_points);
+    Tensor<2, dim> strain_tensor;
     std::vector<double> phi_values(n_q_points),
                         old_phi_values(n_q_points),
                         old_old_phi_values(n_q_points);
+    // Stress decomposition containers
+    constitutive_model::EnergySpectralDecomposition<dim> stress_decomposition;
+    Tensor<2, dim> stress_tensor_plus, stress_tensor_minus;
+    Tensor<2, dim> sigma_u_plus_i, sigma_u_minus_i;
 
     typename DoFHandler<dim>::active_cell_iterator
       cell = dof_handler.begin_active(),
@@ -307,9 +318,12 @@ namespace phase_field
                                                         grad_phi_values);
 
           for (unsigned int q=0; q<n_q_points; ++q) {
-            get_stress_decomposition(strain_tensor_values[q],
-                                     stress_tensor_plus,
-                                     stress_tensor_minus);
+            convert_to_tensor(strain_tensor_values[q], strain_tensor);
+            stress_decomposition.get_stress_decomposition(strain_tensor,
+                                                          data.lame_constant,
+                                                          data.shear_modulus,
+                                                          stress_tensor_plus,
+                                                          stress_tensor_minus);
             // TODO: include time into here
             double d_phi = old_phi_values[q] - old_old_phi_values[q];
             double phi_e = old_phi_values[q] + d_phi;  // extrapolated
@@ -328,17 +342,24 @@ namespace phase_field
 
                 local_rhs[i] +=
                   (
-                   ((1 - kappa)*phi_e*phi_e + kappa)*(stress_tensor_plus*eps_u_i)
-                  + (stress_tensor_minus*eps_u_i)
+                   ((1 - kappa)*phi_e*phi_e + kappa)*
+                     scalar_product(stress_tensor_plus, eps_u_i)
+                   + scalar_product(stress_tensor_minus, eps_u_i)
                   +
-                  (1 - kappa)*phi*(stress_tensor_plus*strain_tensor_values[q])*xi_phi_i
+                   (1 - kappa)*phi*xi_phi_i*
+                   scalar_product(stress_tensor_plus, strain_tensor)
                   + gamma_c*(-1/e*(1 - phi)*xi_phi_i +
-                             e*(grad_phi_values[q]*grad_xi_phi_i))
+                             e*grad_phi_values[q]*grad_xi_phi_i)
                    ) * jxw;
 
-                // Find eps_plus_du, sigma_plus_du, and sigma_minus_du
-                get_stress_decomposition_du(strain_tensor_values[q], eps_u_i,
-                                            sigma_u_plus_i, sigma_u_minus_i);
+                // Find sigma_plus_du, and sigma_minus_du
+                stress_decomposition.get_stress_decomposition_derivatives
+                  (strain_tensor,
+                   eps_u_i,
+                   data.lame_constant,
+                   data.shear_modulus,
+                   sigma_u_plus_i,
+                   sigma_u_minus_i);
 
                 // Assemble local matrix
                 for (unsigned int j=0; j<dofs_per_cell; ++j)
@@ -349,13 +370,16 @@ namespace phase_field
 
                     local_matrix(i, j) +=
                       (
-                       ((1-kappa)*phi_e*phi_e + kappa)*(sigma_u_plus_i*eps_u_j)
+                       ((1-kappa)*phi_e*phi_e + kappa)
+                       *scalar_product(sigma_u_plus_i, eps_u_j)
                        +
-                       (sigma_u_minus_i*eps_u_j)
+                       scalar_product(sigma_u_minus_i, eps_u_j)
                        +
                        (1-kappa)*xi_phi_j*
-                       (xi_phi_i*(stress_tensor_plus*strain_tensor_values[q]) +
-                        2*phi*sigma_u_plus_i*strain_tensor_values[q])
+                       (xi_phi_i*
+                        scalar_product(stress_tensor_plus, strain_tensor) +
+                        2*phi*
+                        scalar_product(sigma_u_plus_i, strain_tensor))
                        +
                        gamma_c*(1/e*xi_phi_i*xi_phi_j +
                                 e*grad_xi_phi_i*grad_xi_phi_j)
@@ -386,132 +410,6 @@ namespace phase_field
     reduced_rhs_vector.compress(VectorOperation::add);
 
   } // EOM
-
-
-  template <int dim>
-  void PhaseFieldSolver<dim>::
-  get_stress_decomposition (const  SymmetricTensor<2,dim> &strain_tensor,
-                            SymmetricTensor<2,dim>        &stress_tensor_plus,
-                            SymmetricTensor<2,dim>        &stress_tensor_minus)
-  {
-    SymmetricTensor<2,dim> strain_tensor_plus;
-    constitutive_model::get_strain_tensor_plus(strain_tensor,
-                                               strain_tensor_plus);
-    double trace_eps = trace(strain_tensor);
-    double trace_eps_pos = std::max(trace_eps, 0.0);
-    stress_tensor_plus = 2*mu*strain_tensor_plus;
-    stress_tensor_plus[0][0] += lambda*trace_eps_pos;
-    stress_tensor_plus[1][1] += lambda*trace_eps_pos;
-
-    stress_tensor_minus = 2*mu*(strain_tensor - strain_tensor_plus);
-    stress_tensor_minus[0][0] += lambda*(trace_eps - trace_eps_pos);
-    stress_tensor_minus[1][1] += lambda*(trace_eps - trace_eps_pos);
-  }  // EOM
-
-
-  template <int dim>
-  void PhaseFieldSolver<dim>::
-  get_stress_decomposition_du (const SymmetricTensor<2,dim> &strain_tensor,
-                               const SymmetricTensor<2,dim> &eps_u_i,
-                               SymmetricTensor<2,dim>       &sigma_u_plus_i,
-                               SymmetricTensor<2,dim>       &sigma_u_minus_i)
-  {
-    Tensor<2,dim> p_matrix, lambda_matrix, p_matrix_du, lambda_matrix_du;
-    double trace_eps = trace(strain_tensor);
-    double det_eps = determinant(strain_tensor);
-    double lambda_1 = trace_eps/2 + sqrt(trace_eps*trace_eps/4 - det_eps);
-    double lambda_2 = trace_eps/2 - sqrt(trace_eps*trace_eps/4 - det_eps);
-
-    lambda_matrix[0][0] = lambda_1;
-    lambda_matrix[0][1] = 0;
-    lambda_matrix[1][0] = 0;
-    lambda_matrix[1][1] = lambda_2;
-
-    // compute lambda_1_du and lambda_2_du
-    double lambda_1_du = trace(eps_u_i)/2 +
-      0.5/sqrt(trace_eps*trace_eps/4 - det_eps) *
-      (eps_u_i[0][1]*strain_tensor[1][0] + strain_tensor[0][1]*eps_u_i[1][0] +
-       0.5*(strain_tensor[0][0] - strain_tensor[1][1])*(eps_u_i[0][0] - eps_u_i[1][1]));
-    double lambda_2_du = trace(eps_u_i)/2 -
-      0.5/sqrt(trace_eps*trace_eps/4 - det_eps) *
-      (eps_u_i[0][1]*strain_tensor[1][0] + strain_tensor[0][1]*eps_u_i[1][0] +
-       0.5*(strain_tensor[0][0] - strain_tensor[1][1])*(eps_u_i[0][0] - eps_u_i[1][1]));
-
-    if (lambda_1 > 0)
-      lambda_matrix_du[0][0] = lambda_1_du;
-    else
-      lambda_matrix_du[0][0] = 0;
-    lambda_matrix_du[0][1] = 0;
-    lambda_matrix_du[1][0] = 0;
-    if (lambda_2 > 0)
-      lambda_matrix_du[1][1] = lambda_2_du;
-    else
-      lambda_matrix_du[1][1] = 0;
-
-    double eps_12 = strain_tensor[0][1];
-    double tmp, tmp1, tmp2;
-
-    // compute v1 and its derivative
-    if (eps_12 == 0) tmp = 0;
-    else tmp = (lambda_1 - strain_tensor[0][0])/strain_tensor[0][1];
-    // double v1_norm = sqrt(1 + tmp*tmp);
-    p_matrix[0][0] = 1./sqrt(1 + tmp*tmp);
-    p_matrix[1][0] = tmp/sqrt(1 + tmp*tmp);
-    // derivative
-    if (eps_12 == 0)
-      {
-        tmp1 = 0;
-        tmp2 = 0;
-      }
-    else
-      {
-        tmp2 =
-          ((lambda_1_du - eps_u_i[0][0])*strain_tensor[0][1] -
-           (lambda_1 - strain_tensor[0][0])*eps_u_i[0][1])/(eps_12*eps_12);
-        tmp1 = -1/(1+tmp*tmp) * 1/(2*sqrt(tmp*tmp)) * 2*tmp * tmp2;
-      }
-
-    p_matrix_du[0][0] = tmp1;
-    p_matrix_du[1][0] = tmp*tmp1 + tmp2;
-
-    // Now compute vector v2 and it's derivative
-    if (eps_12 == 0) tmp = 0;
-    else tmp = (lambda_2 - strain_tensor[0][0])/eps_12;
-    p_matrix[0][1] = 1./sqrt(1 + tmp*tmp);
-    p_matrix[1][1] = tmp/sqrt(1 + tmp*tmp);
-
-    if (eps_12 == 0)
-      {
-        tmp1 = 0;
-        tmp2 = 0;
-      }
-    else
-      {
-        tmp2 =
-          ((lambda_2_du - eps_u_i[0][0])*eps_12 -
-           (lambda_2 - strain_tensor[0][0])*eps_12)/(eps_12*eps_12);
-        tmp1 = -1/(1+tmp*tmp) * 1/(2*sqrt(tmp*tmp)) * 2*tmp * tmp2;
-      }
-
-    p_matrix_du[0][1] = tmp1;
-    p_matrix_du[1][1] = tmp*tmp1 + tmp2;
-
-    // Compute eps_plus_u_i, sigma_plus_u_i, and sigma_minus_u_i
-    Tensor<2,dim> eps_u_plus_i =
-      (p_matrix_du*(lambda_matrix*transpose(p_matrix))) +
-      (p_matrix*(lambda_matrix_du*transpose(p_matrix))) +
-      (p_matrix*(lambda_matrix*transpose(p_matrix_du)));
-
-    double trace_eps_u_i = std::max(0.0, trace(eps_u_i));
-    sigma_u_plus_i = 2*mu*eps_u_plus_i;
-    sigma_u_plus_i[0][0] += lambda*trace_eps_u_i;
-    sigma_u_plus_i[1][1] += lambda*trace_eps_u_i;
-
-    sigma_u_minus_i = 2*mu*(eps_u_i - eps_u_plus_i);
-    sigma_u_minus_i[0][0] += lambda*(trace_eps - trace_eps_u_i);
-    sigma_u_minus_i[1][1] += lambda*(trace_eps - trace_eps_u_i);
-
-  }  // EOM
 
 
   template <int dim>
@@ -592,5 +490,45 @@ namespace phase_field
     //           << residual.l2_norm()
     //           << std::endl;
   }  // EOM
+
+
+  template <int dim>
+  void PhaseFieldSolver<dim>::
+  impose_displacement(const std::vector<double> &displacement_values)
+  {
+    computing_timer.enter_section("Imposing displacement values");
+
+    const unsigned int dofs_per_cell = fe.dofs_per_cell;
+    std::vector<types::global_dof_index> local_dof_indices(dofs_per_cell);
+    const int n_dirichlet_conditions = displacement_values.size();
+
+    typename DoFHandler<dim>::active_cell_iterator
+      cell = dof_handler.begin_active(),
+      endc = dof_handler.end();
+
+    for (; cell!=endc; ++cell)
+      if (cell->is_locally_owned())
+        for (unsigned int f=0; f<GeometryInfo<dim>::faces_per_cell; ++f)
+          if (cell->face(f)->at_boundary())
+            {
+              int face_boundary_id = cell->face(f)->boundary_id();
+
+            // loop through different boundary labels
+            for (int l=0; l<n_dirichlet_conditions; ++l)
+              {
+                int id = data.displacement_boundary_labels[l];
+                if(face_boundary_id == id)
+                  for (unsigned int i=0; i<dofs_per_cell; ++i)
+                    {
+                    const int component_i = fe.system_to_component_index(i).first;
+                    if (component_i == data.displacement_boundary_components[l])
+                      solution(local_dof_indices[i]) = displacement_values[i];
+                    }  // end of component loop
+              } // end loop through components
+            } // end if cell @ boundary
+
+    solution.compress(VectorOperation::insert);
+  }  // EOM
+
 
 }  // end of namespace

@@ -5,7 +5,6 @@
 #include <PhaseFieldSolver.cc>
 
 
-
 namespace pds_solid
 {
   using namespace dealii;
@@ -32,6 +31,7 @@ namespace pds_solid
     ConditionalOStream pcout;
     TimerOutput computing_timer;
 
+    input_data::NotchedTestData data;
     phase_field::PhaseFieldSolver<dim> phase_field_solver;
   };
 
@@ -50,11 +50,10 @@ namespace pds_solid
     computing_timer(mpi_communicator, pcout,
                     TimerOutput::summary,
                     TimerOutput::wall_times),
-    phase_field_solver(mpi_communicator, triangulation,
+    phase_field_solver(mpi_communicator,
+                       triangulation, data,
                        pcout, computing_timer)
-  {
-    pcout << "Problem initialization successful" << std::endl;
-  }
+  {}
 
 
   template <int dim>
@@ -92,6 +91,13 @@ namespace pds_solid
   {
     create_mesh();
     phase_field_solver.setup_dofs();
+    double time = 0;
+    int n_displacement_conditions = data.displacement_boundary_labels.size();
+    std::vector<double> displacement_values(n_displacement_conditions);
+    for (int i=0; i<n_displacement_conditions; ++i)
+      displacement_values[i] = data.displacement_boundary_velocities[i]*time;
+    phase_field_solver.impose_displacement(displacement_values);
+
     phase_field_solver.compute_active_set();
     phase_field_solver.assemble_system();
   }

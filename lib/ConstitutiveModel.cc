@@ -159,7 +159,7 @@ namespace constitutive_model {
     double
       tmp10 = 0, tmp11 = 0, tmp12 = 0,
       tmp20 = 0, tmp21 = 0, tmp22 = 0;
-    if (abs(eps_12) > 1e-16)
+    if (abs(eps_12) > 1e-16)  // 1e-16 is just a small number
       {
         // For the first eigenvector
         tmp10 = (lambda_1 - eps[0][0])/eps_12;
@@ -281,8 +281,6 @@ namespace constitutive_model {
     assemble_eigenvector_matrix_derivative(strain_tensor, eps_u_i,
                                            lambda_matrix, lambda_matrix_du,
                                            p_matrix_du);
-    // if (std::isnan(p_matrix_du[0][0]))
-    //   std::cout << "Nan: " << std::endl;
 
     eps_u_plus_i =
       (p_matrix_du*(lambda_matrix*transpose(p_matrix))) +

@@ -100,6 +100,7 @@ namespace pds_solid
 
     phase_field_solver.compute_active_set();
     phase_field_solver.assemble_system();
+    phase_field_solver.solve();
   }
 
 

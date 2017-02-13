@@ -27,6 +27,7 @@
 // Custom modules
 #include <ConstitutiveModel.cc>
 #include <InputData.cc>
+#include <LinearSolver.cc>
 
 
 namespace phase_field
@@ -80,6 +81,7 @@ namespace phase_field
     TrilinosWrappers::MPI::BlockVector mass_matrix_diagonal;
 
     TrilinosWrappers::BlockSparseMatrix system_matrix, reduced_system_matrix;
+    TrilinosWrappers::BlockSparseMatrix preconditioner_matrix;
 
     ConstraintMatrix physical_constraints, all_constraints;
 
@@ -246,6 +248,7 @@ namespace phase_field
     mass_matrix_diagonal.compress(VectorOperation::insert);
 
     // std::cout << "begin index " << *index << std::endl;
+    computing_timer.exit_section();
 
   }  // EOM
 
@@ -263,7 +266,7 @@ namespace phase_field
   template <int dim>
   void PhaseFieldSolver<dim>::assemble_system()
   {
-    TimerOutput::Scope t(computing_timer, "assemble system");
+    computing_timer.enter_section("Assemble system");
 
     const QGauss<dim> quadrature_formula(3);
     FEValues<dim> fe_values(fe, quadrature_formula,
@@ -424,6 +427,8 @@ namespace phase_field
     rhs_vector.compress(VectorOperation::add);
     reduced_rhs_vector.compress(VectorOperation::add);
 
+    computing_timer.exit_section();
+
   } // EOM
 
 
@@ -433,7 +438,7 @@ namespace phase_field
                                 BlockSparseMatrix &mass_matrix)
   {
     Assert (fe.degree == 1, ExcNotImplemented());
-    TimerOutput::Scope t(computing_timer, "assemble mass matrix diagonal");
+    computing_timer.enter_section("Assemble mass matrix diagonal");
     const QTrapez<dim> quadrature_formula;
     FEValues<dim> fe_values (fe, quadrature_formula,
                              update_quadrature_points |
@@ -468,6 +473,7 @@ namespace phase_field
         }  // end cell loop
 
     mass_matrix.compress(VectorOperation::add);
+    computing_timer.exit_section();
 
   }  // EOM
 
@@ -504,6 +510,7 @@ namespace phase_field
     // std::cout << "   Reduced Residual: "
     //           << residual.l2_norm()
     //           << std::endl;
+    computing_timer.exit_section();
   }  // EOM
 
 
@@ -543,6 +550,7 @@ namespace phase_field
             } // end if cell @ boundary
 
     solution.compress(VectorOperation::insert);
+    computing_timer.exit_section();
   }  // EOM
 
 
@@ -559,18 +567,21 @@ namespace phase_field
       prec_A.initialize(system_matrix.block(0, 0), data);
     }
 
-    // // Preconditioner for the phase-field (1, 1) block
-    // TrilinosWrappers::PreconditionAMG prec_S;
-    // {
-    //   TrilinosWrappers::PreconditionAMG::AdditionalData data;
-    //   prec_S.initialize(system_matrix.block(1, 1), data);
-    // }
+    // Preconditioner for the phase-field (1, 1) block
+    TrilinosWrappers::PreconditionAMG prec_S;
+    {
+      TrilinosWrappers::PreconditionAMG::AdditionalData data;
+      prec_S.initialize(system_matrix.block(1, 1), data);
+    }
 
     // The InverseMatrix is used to solve for the mass matrix
-    // typedef LinearSolvers::InverseMatrix<LA::MPI::SparseMatrix,
-    //                                      LA::MPI::PreconditionAMG> mp_inverse_t;
+    typedef LinearSolvers::
+      InverseMatrix<TrilinosWrappers::SparseMatrix,
+                    TrilinosWrappers::PreconditionAMG> mp_inverse_t;
     // const mp_inverse_t
-    //   mp_inverse (preconditioner_matrix.block(1,1), prec_S);
+    //   mp_inverse(preconditioner_matrix.block(1,1), prec_S);
+
+    computing_timer.exit_section();
   }  // EOM
 
 }  // end of namespace

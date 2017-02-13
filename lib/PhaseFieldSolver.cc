@@ -28,6 +28,7 @@
 #include <ConstitutiveModel.cc>
 #include <InputData.cc>
 
+
 namespace phase_field
 {
   using namespace dealii;
@@ -54,6 +55,7 @@ namespace phase_field
     void assemble_system();
     void compute_active_set();
     void impose_displacement(const std::vector<double> &displacement_values);
+    void solve();
 
   private:
     void assemble_mass_matrix_diagonal(TrilinosWrappers::
@@ -166,15 +168,16 @@ namespace phase_field
       physical_constraints.reinit(locally_relevant_dofs);
       DoFTools::make_hanging_node_constraints(dof_handler,
                                               physical_constraints);
+
       // impose dirichlet conditions
       FEValuesExtractors::Vector displacement(0);
       ComponentMask mask = fe.component_mask(displacement);
       // TODO: constraints the appropriate boundaries with right components
-      // VectorTools::interpolate_boundary_values(dof_handler,
-      //                                          0,
-      //                                          ZeroFunction<dim>(dim+1),
-      //                                          physical_constraints,
-      //                                          mask);
+      VectorTools::interpolate_boundary_values(dof_handler,
+                                               0,
+                                               ZeroFunction<dim>(dim+1),
+                                               physical_constraints,
+                                               mask);
       physical_constraints.close();
 
       all_constraints.clear();
@@ -330,6 +333,11 @@ namespace phase_field
             double phi = phi_values[q];
             double jxw = fe_values.JxW(q);
 
+            // pcout << stress_tensor_minus[0][0];
+            // pcout << stress_tensor_minus[0][1];
+            // pcout << stress_tensor_minus[1][0];
+            // pcout << stress_tensor_minus[1][1] << std::endl;
+
             for (unsigned int i=0; i<dofs_per_cell; ++i)
               {
                 eps_u_i = fe_values[displacement].symmetric_gradient(i, q);
@@ -352,6 +360,7 @@ namespace phase_field
                              e*grad_phi_values[q]*grad_xi_phi_i)
                    ) * jxw;
 
+
                 // Find sigma_plus_du, and sigma_minus_du
                 stress_decomposition.get_stress_decomposition_derivatives
                   (strain_tensor,
@@ -360,6 +369,12 @@ namespace phase_field
                    data.shear_modulus,
                    sigma_u_plus_i,
                    sigma_u_minus_i);
+
+                // pcout << scalar_product(stress_tensor_plus, eps_u_i) << "\t"
+                //       << scalar_product(stress_tensor_minus, eps_u_i) << std::endl;
+                // pcout << local_rhs[i] << std::endl;
+                // if (std::isnan(sigma_u_plus_i[0][0]))
+                //   pcout << "Nan: " << i << std::endl;
 
                 // Assemble local matrix
                 for (unsigned int j=0; j<dofs_per_cell; ++j)
@@ -530,5 +545,32 @@ namespace phase_field
     solution.compress(VectorOperation::insert);
   }  // EOM
 
+
+  template <int dim>
+  void PhaseFieldSolver<dim>::
+  solve()
+  {
+    computing_timer.enter_section("Solve phase-field system");
+
+    // Preconditioner for the displacement (0, 0) block
+    TrilinosWrappers::PreconditionAMG prec_A;
+    {
+      TrilinosWrappers::PreconditionAMG::AdditionalData data;
+      prec_A.initialize(system_matrix.block(0, 0), data);
+    }
+
+    // // Preconditioner for the phase-field (1, 1) block
+    // TrilinosWrappers::PreconditionAMG prec_S;
+    // {
+    //   TrilinosWrappers::PreconditionAMG::AdditionalData data;
+    //   prec_S.initialize(system_matrix.block(1, 1), data);
+    // }
+
+    // The InverseMatrix is used to solve for the mass matrix
+    // typedef LinearSolvers::InverseMatrix<LA::MPI::SparseMatrix,
+    //                                      LA::MPI::PreconditionAMG> mp_inverse_t;
+    // const mp_inverse_t
+    //   mp_inverse (preconditioner_matrix.block(1,1), prec_S);
+  }  // EOM
 
 }  // end of namespace

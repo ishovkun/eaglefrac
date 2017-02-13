@@ -57,38 +57,38 @@ namespace constitutive_model {
 	  return tmp;
   }
 
-  template <int dim> void
-  get_strain_tensor_plus(const SymmetricTensor<2,dim> &strain_tensor,
-                         SymmetricTensor<2,dim>       &strain_tensor_plus)
-  {
-    // Assert that dimensions match
+  // template <int dim> void
+  // get_strain_tensor_plus(const SymmetricTensor<2,dim> &strain_tensor,
+  //                        SymmetricTensor<2,dim>       &strain_tensor_plus)
+  // {
+  //   // Assert that dimensions match
 
-    Tensor<2,dim> p_matrix, lambda_matrix;
-    strain_tensor_plus = 0;
-    double trace_eps = trace(strain_tensor);
-    double det_eps = determinant(strain_tensor);
-    double lambda_1 = trace_eps/2 + sqrt(trace_eps*trace_eps/4 - det_eps);
-    double lambda_2 = trace_eps/2 - sqrt(trace_eps*trace_eps/4 - det_eps);
-    lambda_matrix[0][0] = std::max(lambda_1, 0.0);
-    lambda_matrix[1][1] = std::max(lambda_2, 0.0);
-    lambda_matrix[0][1] = 0;
-    lambda_matrix[1][0] = 0;
-    double tmp;
-    double eps_12 = strain_tensor[0][1];
-    // we need to make sure the denominator is nonzero, otherwise we get nans
-    if (eps_12 == 0) tmp = 0;
-    else tmp = (lambda_1 - strain_tensor[0][0])/strain_tensor[0][1];
-    p_matrix[0][0] = 1./sqrt(1 + tmp*tmp);
-    p_matrix[1][0] = tmp/sqrt(1 + tmp*tmp);
-    if (eps_12 == 0) tmp = 0;
-    else tmp = (lambda_2 - strain_tensor[0][0])/strain_tensor[0][1];
-    p_matrix[0][1] = 1./sqrt(1 + tmp*tmp);
-    p_matrix[1][1] = tmp/sqrt(1 + tmp*tmp);
-    strain_tensor_plus = p_matrix*lambda_matrix*transpose(p_matrix);
+  //   Tensor<2,dim> p_matrix, lambda_matrix;
+  //   strain_tensor_plus = 0;
+  //   double trace_eps = trace(strain_tensor);
+  //   double det_eps = determinant(strain_tensor);
+  //   double lambda_1 = trace_eps/2 + sqrt(trace_eps*trace_eps/4 - det_eps);
+  //   double lambda_2 = trace_eps/2 - sqrt(trace_eps*trace_eps/4 - det_eps);
+  //   lambda_matrix[0][0] = std::max(lambda_1, 0.0);
+  //   lambda_matrix[1][1] = std::max(lambda_2, 0.0);
+  //   lambda_matrix[0][1] = 0;
+  //   lambda_matrix[1][0] = 0;
+  //   double tmp;
+  //   double eps_12 = strain_tensor[0][1];
+  //   // we need to make sure the denominator is nonzero, otherwise we get nans
+  //   if (eps_12 == 0) tmp = 0;
+  //   else tmp = (lambda_1 - strain_tensor[0][0])/strain_tensor[0][1];
+  //   p_matrix[0][0] = 1./sqrt(1 + tmp*tmp);
+  //   p_matrix[1][0] = tmp/sqrt(1 + tmp*tmp);
+  //   if (eps_12 == 0) tmp = 0;
+  //   else tmp = (lambda_2 - strain_tensor[0][0])/strain_tensor[0][1];
+  //   p_matrix[0][1] = 1./sqrt(1 + tmp*tmp);
+  //   p_matrix[1][1] = tmp/sqrt(1 + tmp*tmp);
+  //   strain_tensor_plus = p_matrix*lambda_matrix*transpose(p_matrix);
 
-    // std::cout << strain_tensor_plus[0][0] << "\t" << strain_tensor_plus[0][1] << std::endl;
-    // std::cout << strain_tensor_plus[1][0] << "\t" << strain_tensor_plus[1][1] << std::endl;
-  }  // EOM
+  //   // std::cout << strain_tensor_plus[0][0] << "\t" << strain_tensor_plus[0][1] << std::endl;
+  //   // std::cout << strain_tensor_plus[1][0] << "\t" << strain_tensor_plus[1][1] << std::endl;
+  // }  // EOM
 
   template <int dim> inline
   void assemble_eigenvalue_matrix(const Tensor<2,dim> &strain_tensor,
@@ -159,7 +159,7 @@ namespace constitutive_model {
     double
       tmp10 = 0, tmp11 = 0, tmp12 = 0,
       tmp20 = 0, tmp21 = 0, tmp22 = 0;
-    if (eps_12 != 0)
+    if (abs(eps_12) > 1e-16)
       {
         // For the first eigenvector
         tmp10 = (lambda_1 - eps[0][0])/eps_12;
@@ -281,6 +281,9 @@ namespace constitutive_model {
     assemble_eigenvector_matrix_derivative(strain_tensor, eps_u_i,
                                            lambda_matrix, lambda_matrix_du,
                                            p_matrix_du);
+    // if (std::isnan(p_matrix_du[0][0]))
+    //   std::cout << "Nan: " << std::endl;
+
     eps_u_plus_i =
       (p_matrix_du*(lambda_matrix*transpose(p_matrix))) +
       (p_matrix*(lambda_matrix_du*transpose(p_matrix))) +

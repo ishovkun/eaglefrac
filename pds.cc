@@ -20,7 +20,6 @@ namespace pds_solid
     void run();
 
   private:
-    void compute_active_set();
     void create_mesh();
     void setup_dofs();
 
@@ -75,13 +74,13 @@ namespace pds_solid
 
     Point<dim> p1(point_1), p2(point_2);
 
-    // GridGenerator::hyper_rectangle
-    //   (triangulation, p1, p2,
-    //    /*colorize = */ true);
-    GridGenerator::hyper_cube(triangulation);
+    GridGenerator::hyper_rectangle
+      (triangulation, p1, p2,
+       /*colorize = */ true);
+    // GridGenerator::hyper_cube(triangulation);
     // triangulation.set_all_manifold_ids(0);
 
-    int initial_refinement_level = 4;
+    int initial_refinement_level = 2;
     triangulation.refine_global(initial_refinement_level);
   }
 
@@ -92,6 +91,7 @@ namespace pds_solid
     create_mesh();
     phase_field_solver.setup_dofs();
     double time = 0;
+
     int n_displacement_conditions = data.displacement_boundary_labels.size();
     std::vector<double> displacement_values(n_displacement_conditions);
     for (int i=0; i<n_displacement_conditions; ++i)

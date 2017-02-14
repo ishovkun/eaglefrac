@@ -114,7 +114,6 @@ namespace pds_solid
         double newton_tolerance = 1e-6;
         while (n_iter < max_newton_iter)
           {
-
             if (n_iter > 1)
               {
                 phase_field_solver.compute_active_set();

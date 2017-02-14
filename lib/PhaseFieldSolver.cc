@@ -36,7 +36,7 @@ namespace phase_field
 
 
   const double mu = 1000, lambda = 1e6;
-  const double kappa = 1e-12, gamma_c = 1, e = 1e-6;
+  const double kappa = 1e-12, gamma_c = 1;
   const double penalty_parameter = 1;
 
   template <int dim>
@@ -59,6 +59,7 @@ namespace phase_field
     void solve();
 
   private:
+    // this function also computes finest mesh size
     void assemble_mass_matrix_diagonal(TrilinosWrappers::
                                        BlockSparseMatrix &mass_matrix);
 
@@ -81,6 +82,7 @@ namespace phase_field
     TrilinosWrappers::BlockSparseMatrix preconditioner_matrix;
 
     ConstraintMatrix physical_constraints, all_constraints;
+    double min_cell_size;
 
   public:
     double time_step;
@@ -272,8 +274,6 @@ namespace phase_field
       residual.reinit(rhs_vector);
     }
 
-    computing_timer.exit_section();
-
   }  // EOM
 
 
@@ -322,6 +322,7 @@ namespace phase_field
     constitutive_model::EnergySpectralDecomposition<dim> stress_decomposition;
     Tensor<2, dim> stress_tensor_plus, stress_tensor_minus;
     Tensor<2, dim> sigma_u_plus_i, sigma_u_minus_i;
+    double e = data.regularization_parameter_epsilon*min_cell_size;
 
     typename DoFHandler<dim>::active_cell_iterator
       cell = dof_handler.begin_active(),
@@ -361,7 +362,6 @@ namespace phase_field
             double phi_e = old_phi_values[q] + d_phi;  // extrapolated
             double phi = phi_values[q];
             double jxw = fe_values.JxW(q);
-
 
             for (unsigned int i=0; i<dofs_per_cell; ++i)
               {
@@ -481,6 +481,10 @@ namespace phase_field
     FullMatrix<double> cell_matrix(dofs_per_cell, dofs_per_cell);
     std::vector<types::global_dof_index> local_dof_indices(dofs_per_cell);
 
+    // additionally, compute finest cell size
+    double min_local_cell_size =
+      triangulation.last()->diameter()/std::sqrt(dim);
+
     typename DoFHandler<dim>::active_cell_iterator
       cell = dof_handler.begin_active(),
       endc = dof_handler.end();
@@ -501,10 +505,19 @@ namespace phase_field
           physical_constraints.distribute_local_to_global(cell_matrix,
                                                           local_dof_indices,
                                                           mass_matrix);
+
+          double cell_size = cell->diameter()/std::sqrt(dim);
+          if (cell_size < min_local_cell_size)
+            min_local_cell_size = cell_size;
           // break;
         }  // end cell loop
 
     mass_matrix.compress(VectorOperation::add);
+
+    min_cell_size
+      = -Utilities::MPI::max(-min_local_cell_size, MPI_COMM_WORLD);
+    pcout << "Minimum cell size: " << min_cell_size << std::endl;
+
     computing_timer.exit_section();
 
   }  // EOM

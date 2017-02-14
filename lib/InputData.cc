@@ -54,6 +54,7 @@ namespace input_data {
     displacement_boundary_labels = {2, 3};
     displacement_boundary_components = {1 ,1};
     displacement_boundary_velocities = {0, 1e-3};
+    regularization_parameter_epsilon = 1;
   }  // EOM
 
 }  // end of namespace

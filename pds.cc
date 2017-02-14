@@ -22,6 +22,7 @@ namespace pds_solid
   private:
     void create_mesh();
     void setup_dofs();
+    void impose_displacement_on_solution(double time);
 
     MPI_Comm mpi_communicator;
 
@@ -84,6 +85,15 @@ namespace pds_solid
     triangulation.refine_global(initial_refinement_level);
   }
 
+  template <int dim>
+  void PDSSolid<dim>::impose_displacement_on_solution(double time)
+  {
+    int n_displacement_conditions = data.displacement_boundary_labels.size();
+    std::vector<double> displacement_values(n_displacement_conditions);
+    for (int i=0; i<n_displacement_conditions; ++i)
+      displacement_values[i] = data.displacement_boundary_velocities[i]*time;
+    phase_field_solver.impose_displacement(displacement_values);
+  }
 
   template <int dim>
   void PDSSolid<dim>::run()
@@ -92,15 +102,29 @@ namespace pds_solid
     phase_field_solver.setup_dofs();
     double time = 0;
 
-    int n_displacement_conditions = data.displacement_boundary_labels.size();
-    std::vector<double> displacement_values(n_displacement_conditions);
-    for (int i=0; i<n_displacement_conditions; ++i)
-      displacement_values[i] = data.displacement_boundary_velocities[i]*time;
-    phase_field_solver.impose_displacement(displacement_values);
+    IndexSet active_set_old(phase_field_solver.active_set);
+    impose_displacement_on_solution(time);
 
-    phase_field_solver.compute_active_set();
-    phase_field_solver.assemble_system();
-    phase_field_solver.solve();
+    int n_iter = 1;
+    int max_newton_iter = 50;
+    while (n_iter < max_newton_iter)
+      {
+
+        if (n_iter > 1)
+          {
+            phase_field_solver.compute_active_set();
+            if (phase_field_solver.active_set == active_set_old)
+              pcout << "Cool" << std::endl;
+            break;
+          }
+
+        phase_field_solver.assemble_system();
+        phase_field_solver.solve();
+        phase_field_solver.solution += phase_field_solver.solution_update;
+
+        n_iter++;
+      }  // End Newton iter
+
   }
 
 

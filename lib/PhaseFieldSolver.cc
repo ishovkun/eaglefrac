@@ -73,10 +73,8 @@ namespace phase_field
     FESystem<dim> fe;
 
     IndexSet locally_owned_dofs;
-    IndexSet active_set;
 
-    TrilinosWrappers::MPI::BlockVector solution, solution_update,
-                                       old_solution, old_old_solution;
+    TrilinosWrappers::MPI::BlockVector old_solution, old_old_solution;
     TrilinosWrappers::MPI::BlockVector residual, rhs_vector, reduced_rhs_vector;
     TrilinosWrappers::MPI::BlockVector mass_matrix_diagonal;
 
@@ -87,6 +85,8 @@ namespace phase_field
 
   public:
     double time_step;
+    IndexSet active_set;
+    TrilinosWrappers::MPI::BlockVector solution, solution_update;
   };
 
 

@@ -188,13 +188,13 @@ namespace phase_field
       all_constraints.close();
     }
 
-    TrilinosWrappers::BlockSparsityPattern sp(partitioning, partitioning,
-                                              relevant_partitioning,
-                                              mpi_communicator);
-    { // Setup matrices
+    { // Setup system matrices
       system_matrix.clear();
       reduced_system_matrix.clear();
 
+      TrilinosWrappers::BlockSparsityPattern sp(partitioning, partitioning,
+                                                relevant_partitioning,
+                                                mpi_communicator);
       /*
       Displacements are coupled with one another (upper-left block = true),
       displacements are coupled with phase-field (lower-left block = true),
@@ -218,7 +218,47 @@ namespace phase_field
 
       system_matrix.reinit(sp);
       reduced_system_matrix.reinit(sp);
+    }
 
+    { // Setup Preconditioner matrix and mass matrix
+      // Essentially the same as the previous section, but coupling
+      // is a little bit simpler
+      preconditioner_matrix.clear();
+
+      TrilinosWrappers::BlockSparsityPattern sp(partitioning, partitioning,
+                                                relevant_partitioning,
+                                                mpi_communicator);
+
+      Table<2,DoFTools::Coupling> coupling(dim+1, dim+1);
+      for (unsigned int c=0; c<dim+1; ++c)
+        for (unsigned int d=0; d<dim+1; ++d)
+          if (((c<dim) && (d<dim)) || ((c==dim) && (d==dim)))
+            coupling[c][d] = DoFTools::always;
+          else
+            coupling[c][d] = DoFTools::none;
+
+      DoFTools::make_sparsity_pattern(dof_handler, coupling, sp,
+                                      physical_constraints,
+                                      /* 	keep_constrained_dofs = */ false,
+                                      Utilities::MPI::
+                                      this_mpi_process(mpi_communicator));
+
+      sp.compress();
+      preconditioner_matrix.reinit(sp);
+
+      // Finally assemble the diagonal of the mass matrix
+      TrilinosWrappers::BlockSparseMatrix mass_matrix;
+      mass_matrix.reinit(sp);
+      assemble_mass_matrix_diagonal(mass_matrix);
+      mass_matrix_diagonal.reinit(partitioning, relevant_partitioning,
+                                  mpi_communicator, /* omit-zeros=*/ true);
+
+      IndexSet::ElementIterator
+        index = locally_owned_dofs.begin(),
+        end_index = locally_owned_dofs.end();
+      for (; index!=end_index; ++index)
+        mass_matrix_diagonal(*index) = mass_matrix.diag_element(*index);
+      mass_matrix_diagonal.compress(VectorOperation::insert);
     }
 
     { // Setup vectors
@@ -233,21 +273,6 @@ namespace phase_field
       residual.reinit(rhs_vector);
     }
 
-    // Finally assemble the diagonal of the mass matrix
-    TrilinosWrappers::BlockSparseMatrix mass_matrix;
-    mass_matrix.reinit(sp);
-    assemble_mass_matrix_diagonal(mass_matrix);
-    mass_matrix_diagonal.reinit(partitioning, relevant_partitioning,
-                                mpi_communicator, /* omit-zeros=*/ true);
-
-    IndexSet::ElementIterator
-      index = locally_owned_dofs.begin(),
-      end_index = locally_owned_dofs.end();
-    for (; index!=end_index; ++index)
-        mass_matrix_diagonal(*index) = mass_matrix.diag_element(*index);
-    mass_matrix_diagonal.compress(VectorOperation::insert);
-
-    // std::cout << "begin index " << *index << std::endl;
     computing_timer.exit_section();
 
   }  // EOM
@@ -578,8 +603,8 @@ namespace phase_field
     typedef LinearSolvers::
       InverseMatrix<TrilinosWrappers::SparseMatrix,
                     TrilinosWrappers::PreconditionAMG> mp_inverse_t;
-    // const mp_inverse_t
-    //   mp_inverse(preconditioner_matrix.block(1,1), prec_S);
+    const mp_inverse_t
+      mp_inverse(preconditioner_matrix.block(1,1), prec_S);
 
     computing_timer.exit_section();
   }  // EOM

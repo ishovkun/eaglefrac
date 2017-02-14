@@ -151,7 +151,7 @@ namespace phase_field
     // Partitioning
     std::vector<IndexSet> partitioning, relevant_partitioning;
     IndexSet locally_relevant_dofs;
-    {
+    { // compute owned dofs, partitioning, and relevant partitioning
       locally_owned_dofs = dof_handler.locally_owned_dofs();
       active_set.set_size(dof_handler.n_locally_owned_dofs());
 
@@ -162,7 +162,7 @@ namespace phase_field
                                               locally_relevant_dofs);
 
       relevant_partitioning.push_back(locally_relevant_dofs.get_view(0, n_u));
-      relevant_partitioning.push_back(locally_relevant_dofs.get_view(n_u, n_u + n_phi));
+      relevant_partitioning.push_back(locally_relevant_dofs.get_view(n_u, n_u+n_phi));
     }
 
     { // constraints
@@ -188,7 +188,7 @@ namespace phase_field
       all_constraints.close();
     }
 
-    { // Setup system matrices
+    { // Setup system matrices and diagonal mass matrix
       system_matrix.clear();
       reduced_system_matrix.clear();
 
@@ -218,33 +218,6 @@ namespace phase_field
 
       system_matrix.reinit(sp);
       reduced_system_matrix.reinit(sp);
-    }
-
-    { // Setup Preconditioner matrix and mass matrix
-      // Essentially the same as the previous section, but coupling
-      // is a little bit simpler
-      preconditioner_matrix.clear();
-
-      TrilinosWrappers::BlockSparsityPattern sp(partitioning, partitioning,
-                                                relevant_partitioning,
-                                                mpi_communicator);
-
-      Table<2,DoFTools::Coupling> coupling(dim+1, dim+1);
-      for (unsigned int c=0; c<dim+1; ++c)
-        for (unsigned int d=0; d<dim+1; ++d)
-          if (((c<dim) && (d<dim)) || ((c==dim) && (d==dim)))
-            coupling[c][d] = DoFTools::always;
-          else
-            coupling[c][d] = DoFTools::none;
-
-      DoFTools::make_sparsity_pattern(dof_handler, coupling, sp,
-                                      physical_constraints,
-                                      /* 	keep_constrained_dofs = */ false,
-                                      Utilities::MPI::
-                                      this_mpi_process(mpi_communicator));
-
-      sp.compress();
-      preconditioner_matrix.reinit(sp);
 
       // Finally assemble the diagonal of the mass matrix
       TrilinosWrappers::BlockSparseMatrix mass_matrix;
@@ -259,6 +232,32 @@ namespace phase_field
       for (; index!=end_index; ++index)
         mass_matrix_diagonal(*index) = mass_matrix.diag_element(*index);
       mass_matrix_diagonal.compress(VectorOperation::insert);
+    }
+
+    { // Preconditioner matrix
+      preconditioner_matrix.clear();
+
+      TrilinosWrappers::BlockSparsityPattern sp(partitioning, partitioning,
+                                                relevant_partitioning,
+                                                mpi_communicator);
+
+      // only phi-phi entries
+      Table<2,DoFTools::Coupling> coupling(dim+1, dim+1);
+      for (unsigned int c=0; c<dim+1; ++c)
+        for (unsigned int d=0; d<dim+1; ++d)
+          if (c==dim && d==dim)
+            coupling[c][d] = DoFTools::always;
+          else
+            coupling[c][d] = DoFTools::none;
+
+      DoFTools::make_sparsity_pattern(dof_handler, coupling, sp,
+                                      physical_constraints,
+                                      /* 	keep_constrained_dofs = */ false,
+                                      Utilities::MPI::
+                                      this_mpi_process(mpi_communicator));
+
+      sp.compress();
+      preconditioner_matrix.reinit(sp);
     }
 
     { // Setup vectors
@@ -300,7 +299,8 @@ namespace phase_field
                             update_JxW_values);
     const unsigned int dofs_per_cell   = fe.dofs_per_cell;
     const unsigned int n_q_points      = quadrature_formula.size();
-    FullMatrix<double>   local_matrix(dofs_per_cell, dofs_per_cell);
+    FullMatrix<double>   local_matrix(dofs_per_cell, dofs_per_cell),
+                         prec_local_matrix(dofs_per_cell, dofs_per_cell);
     Vector<double>       local_rhs(dofs_per_cell);
     std::vector<types::global_dof_index> local_dof_indices(dofs_per_cell);
 
@@ -332,6 +332,7 @@ namespace phase_field
         {
           local_rhs = 0;
           local_matrix = 0;
+          prec_local_matrix = 0;
           fe_values.reinit(cell);
           // right_hand_side.value_list(fe_values.get_quadrature_points(),
           //                            rhs_values);
@@ -361,10 +362,6 @@ namespace phase_field
             double phi = phi_values[q];
             double jxw = fe_values.JxW(q);
 
-            // pcout << stress_tensor_minus[0][0];
-            // pcout << stress_tensor_minus[0][1];
-            // pcout << stress_tensor_minus[1][0];
-            // pcout << stress_tensor_minus[1][1] << std::endl;
 
             for (unsigned int i=0; i<dofs_per_cell; ++i)
               {
@@ -428,6 +425,8 @@ namespace phase_field
                                 e*grad_xi_phi_i*grad_xi_phi_j)
                       ) * jxw;
 
+                    prec_local_matrix(i, j) += (xi_phi_i*xi_phi_j*jxw);
+
                   }  // end j loop
               }  // end i loop
           }  // end q loop
@@ -445,10 +444,15 @@ namespace phase_field
                                                      local_dof_indices,
                                                      reduced_system_matrix,
                                                      reduced_rhs_vector);
+
+          all_constraints.distribute_local_to_global(prec_local_matrix,
+                                                     local_dof_indices,
+                                                     preconditioner_matrix);
         }  // end of cell loop
 
     system_matrix.compress(VectorOperation::add);
     reduced_system_matrix.compress(VectorOperation::add);
+    preconditioner_matrix.compress(VectorOperation::add);
     rhs_vector.compress(VectorOperation::add);
     reduced_rhs_vector.compress(VectorOperation::add);
 
@@ -596,7 +600,7 @@ namespace phase_field
     TrilinosWrappers::PreconditionAMG prec_S;
     {
       TrilinosWrappers::PreconditionAMG::AdditionalData data;
-      prec_S.initialize(system_matrix.block(1, 1), data);
+      prec_S.initialize(preconditioner_matrix.block(1, 1), data);
     }
 
     // The InverseMatrix is used to solve for the mass matrix
@@ -604,9 +608,30 @@ namespace phase_field
       InverseMatrix<TrilinosWrappers::SparseMatrix,
                     TrilinosWrappers::PreconditionAMG> mp_inverse_t;
     const mp_inverse_t
-      mp_inverse(preconditioner_matrix.block(1,1), prec_S);
+      mp_inverse(preconditioner_matrix.block(1, 1), prec_S);
+
+    // Construct block preconditioner (for the whole matrix)
+    const LinearSolvers::
+      BlockDiagonalPreconditioner<TrilinosWrappers::PreconditionAMG, mp_inverse_t>
+      preconditioner(prec_A, mp_inverse);
+
+    // set up the linear solver and solve the system
+    SolverControl solver_control (system_matrix.m(),
+                                  1e-10*rhs_vector.l2_norm());
+
+    SolverFGMRES<TrilinosWrappers::MPI::BlockVector>
+      solver(solver_control);
+
+    all_constraints.set_zero(solution_update);
+    solver.solve(system_matrix, solution_update, rhs_vector,
+                 preconditioner);
+
+    pcout << "   Solved in " << solver_control.last_step()
+          << " iterations." << std::endl;
+    all_constraints.distribute(solution_update);
 
     computing_timer.exit_section();
+
   }  // EOM
 
 }  // end of namespace

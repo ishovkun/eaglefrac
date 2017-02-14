@@ -157,30 +157,34 @@ namespace constitutive_model {
                  lambda_2_du = lambda_matrix_du[1][1];
 
     double
-      tmp10 = 0, tmp11 = 0, tmp12 = 0,
-      tmp20 = 0, tmp21 = 0, tmp22 = 0;
-    if (abs(eps_12) > 1e-16)  // 1e-16 is just a small number
-      {
-        // For the first eigenvector
-        tmp10 = (lambda_1 - eps[0][0])/eps_12;
-        tmp12 =
-          ((lambda_1_du - eps_u_i[0][0])*eps_12 -
-           (lambda_1 - eps[0][0])*eps_12)/(eps_12*eps_12);
-        tmp11 = -1/(1+tmp10*tmp10) * 1/(2*sqrt(tmp10*tmp10)) * 2*tmp10 * tmp12;
+      tmp10, tmp11, tmp12,
+      tmp20, tmp21, tmp22;
+
+    // For the first eigenvector
+    tmp10 = (lambda_1 - eps[0][0])/eps_12;
+    tmp12 =
+      ((lambda_1_du - eps_u_i[0][0])*eps_12 -
+       (lambda_1 - eps[0][0])*eps_12)/(eps_12*eps_12);
+    tmp11 = -1/(1+tmp10*tmp10) * 1/(2*sqrt(tmp10*tmp10)) * 2*tmp10 * tmp12;
 
         // For the second eigenvector
-        tmp20 = (lambda_2 - eps[0][0])/eps[0][1];
-        tmp22 =
-          ((lambda_2_du - eps_u_i[0][0])*eps_12 -
-           (lambda_2 - eps[0][0])*eps_12)/(eps_12*eps_12);
-        tmp22 = -1/(1+tmp20*tmp20) * 1/(2*sqrt(tmp20*tmp20)) * 2*tmp20 * tmp22;
-      }
+    tmp20 = (lambda_2 - eps[0][0])/eps[0][1];
+    tmp22 =
+      ((lambda_2_du - eps_u_i[0][0])*eps_12 -
+       (lambda_2 - eps[0][0])*eps_12)/(eps_12*eps_12);
+    tmp21 = -1/(1+tmp20*tmp20) * 1/(2*sqrt(tmp20*tmp20)) * 2*tmp20 * tmp22;
 
     // Compute entries
     p_matrix_du[0][0] = tmp11;
     p_matrix_du[1][0] = tmp10*tmp11 + tmp12;
     p_matrix_du[0][1] = tmp21;
     p_matrix_du[1][1] = tmp20*tmp21 + tmp22;
+
+    // Assert no nonzero values
+    for (int i=0; i<dim; ++ i)
+      for (int j=0; j<dim; ++ j)
+        if (std::isnan(p_matrix_du[i][j]))
+                  p_matrix_du[i][j] = 0;
 
   }  // EOM
 

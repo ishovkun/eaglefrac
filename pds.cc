@@ -100,30 +100,48 @@ namespace pds_solid
   {
     create_mesh();
     phase_field_solver.setup_dofs();
-    double time = 0;
-
-    IndexSet active_set_old(phase_field_solver.active_set);
-    impose_displacement_on_solution(time);
-
-    int n_iter = 1;
-    int max_newton_iter = 50;
-    while (n_iter < max_newton_iter)
+    double time = 0, t_max = 10, time_step = 1;
+    while(time < t_max)
       {
+        phase_field_solver.old_old_solution = phase_field_solver.old_solution;
+        phase_field_solver.old_solution = phase_field_solver.solution;
 
-        if (n_iter > 1)
+        IndexSet old_active_set(phase_field_solver.active_set);
+        impose_displacement_on_solution(time);
+
+        int n_iter = 1;
+        int max_newton_iter = 10;
+        double newton_tolerance = 1e-6;
+        while (n_iter < max_newton_iter)
           {
-            phase_field_solver.compute_active_set();
-            if (phase_field_solver.active_set == active_set_old)
-              pcout << "Cool" << std::endl;
-            break;
-          }
 
-        phase_field_solver.assemble_system();
-        phase_field_solver.solve();
-        phase_field_solver.solution += phase_field_solver.solution_update;
+            if (n_iter > 1)
+              {
+                phase_field_solver.compute_active_set();
+                double error = phase_field_solver.compute_residual();
+                pcout << "error = " << error << std::endl;
+                if ((phase_field_solver.active_set == old_active_set) &&
+                    (error < newton_tolerance)
+                    // 1
+                    )
+                  {
+                    pcout << "Cool" << std::endl;
+                    break;
+                  }
+                old_active_set = phase_field_solver.active_set;
+              }
 
-        n_iter++;
-      }  // End Newton iter
+            phase_field_solver.assemble_system();
+            phase_field_solver.solve();
+            phase_field_solver.solution += phase_field_solver.solution_update;
+
+            n_iter++;
+
+          }  // End Newton iter
+
+        time += time_step;
+
+      }
 
   }
 

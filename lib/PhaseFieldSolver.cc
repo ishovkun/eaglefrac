@@ -52,7 +52,7 @@ namespace phase_field
     ~PhaseFieldSolver();
 
     void setup_dofs();
-    void compute_residual();
+    double compute_residual();
     void assemble_system();
     void compute_active_set();
     void impose_displacement(const std::vector<double> &displacement_values);
@@ -74,7 +74,6 @@ namespace phase_field
 
     IndexSet locally_owned_dofs;
 
-    TrilinosWrappers::MPI::BlockVector old_solution, old_old_solution;
     TrilinosWrappers::MPI::BlockVector residual, rhs_vector, reduced_rhs_vector;
     TrilinosWrappers::MPI::BlockVector mass_matrix_diagonal;
 
@@ -87,6 +86,7 @@ namespace phase_field
     double time_step;
     IndexSet active_set;
     TrilinosWrappers::MPI::BlockVector solution, solution_update;
+    TrilinosWrappers::MPI::BlockVector old_solution, old_old_solution;
   };
 
 
@@ -456,6 +456,9 @@ namespace phase_field
     rhs_vector.compress(VectorOperation::add);
     reduced_rhs_vector.compress(VectorOperation::add);
 
+    reduced_rhs_vector *= -1;
+    // reduced_rhs_vector.compress(VectorOperation::multiply);
+
     computing_timer.exit_section();
 
   } // EOM
@@ -536,12 +539,16 @@ namespace phase_field
 
     all_constraints.merge(physical_constraints);
     all_constraints.close();
-    // std::cout << "   Reduced Residual: "
-    //           << residual.l2_norm()
-    //           << std::endl;
     computing_timer.exit_section();
   }  // EOM
 
+
+  template <int dim>
+  double PhaseFieldSolver<dim>::compute_residual()
+  {
+    reduced_system_matrix.residual(residual, solution, reduced_rhs_vector);
+    return residual.l2_norm();
+  }  // EOM
 
   template <int dim>
   void PhaseFieldSolver<dim>::

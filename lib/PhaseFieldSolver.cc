@@ -63,11 +63,14 @@ namespace phase_field
     void assemble_mass_matrix_diagonal(TrilinosWrappers::
                                        BlockSparseMatrix &mass_matrix);
 
+  public:
     // variables
     MPI_Comm &mpi_communicator;
     parallel::distributed::Triangulation<dim> &triangulation;
     input_data::PhaseFieldData &data;
     DoFHandler<dim> dof_handler;
+
+  private:
     ConditionalOStream &pcout;
     TimerOutput &computing_timer;
 
@@ -274,6 +277,7 @@ namespace phase_field
       residual.reinit(rhs_vector);
     }
 
+    computing_timer.exit_section();
   }  // EOM
 
 
@@ -385,7 +389,6 @@ namespace phase_field
                              e*grad_phi_values[q]*grad_xi_phi_i)
                    ) * jxw;
 
-
                 // Find sigma_plus_du, and sigma_minus_du
                 stress_decomposition.get_stress_decomposition_derivatives
                   (strain_tensor,
@@ -394,6 +397,7 @@ namespace phase_field
                    data.shear_modulus,
                    sigma_u_plus_i,
                    sigma_u_minus_i);
+                // pcout << sigma_u_plus_i[i][j] << std::endl;
 
                 // pcout << scalar_product(stress_tensor_plus, eps_u_i) << "\t"
                 //       << scalar_product(stress_tensor_minus, eps_u_i) << std::endl;
@@ -456,7 +460,7 @@ namespace phase_field
     rhs_vector.compress(VectorOperation::add);
     reduced_rhs_vector.compress(VectorOperation::add);
 
-    reduced_rhs_vector *= -1;
+    // reduced_rhs_vector *= -1;
     // reduced_rhs_vector.compress(VectorOperation::multiply);
 
     computing_timer.exit_section();
@@ -514,8 +518,8 @@ namespace phase_field
 
     mass_matrix.compress(VectorOperation::add);
 
-    min_cell_size
-      = -Utilities::MPI::max(-min_local_cell_size, MPI_COMM_WORLD);
+    min_cell_size =
+      -Utilities::MPI::max(-min_local_cell_size, MPI_COMM_WORLD);
     pcout << "Minimum cell size: " << min_cell_size << std::endl;
 
     computing_timer.exit_section();
@@ -559,7 +563,7 @@ namespace phase_field
   template <int dim>
   double PhaseFieldSolver<dim>::compute_residual()
   {
-    reduced_system_matrix.residual(residual, solution, reduced_rhs_vector);
+    reduced_system_matrix.residual(residual, solution_update, reduced_rhs_vector);
     return residual.l2_norm();
   }  // EOM
 

@@ -1,20 +1,25 @@
-xSize = 10;
-ySize = 10;
-notch_width = 0.05;
+xSize = 1e-2;
+ySize = 1e-2;
+notch_width = ySize/100;
+m_size_coarse = xSize/5;
+m_size_fine = notch_width/5;
 
 // Outer points
-Point(1) = {-xSize/2, -ySize/2, 0, 1};  // bottom left
-Point(2) = {+xSize/2, -ySize/2, 0, 1};  // bottom right
-Point(3) = {+xSize/2, +ySize/2, 0, 1};  // top right
-Point(4) = {-xSize/2, +ySize/2, 0, 1};  // top left
+Point(1) = {-xSize/2, -ySize/2, 0, m_size_coarse};  // bottom left
+Point(2) = {+xSize/2, -ySize/2, 0, m_size_coarse};  // bottom right
+Point(3) = {+xSize/2, +ySize/2, 0, m_size_coarse};  // top right
+Point(4) = {-xSize/2, +ySize/2, 0, m_size_coarse};  // top left
 
 // Notch point
-Point(5) = {0, 0, 0, 1};
+Point(5) = {0, 0, 0, m_size_fine};
 
 // notch corners
-Point(6) = {+xSize/2, -notch_width/2, 0, 1};
-Point(7) = {+xSize/2, +notch_width/2, 0, 1};
+Point(6) = {+xSize/2, -notch_width/2, 0, m_size_coarse};
+Point(7) = {+xSize/2, +notch_width/2, 0, m_size_coarse};
 
+// refinement line corners
+Point(8) = {-xSize/2, 0, 0, m_size_fine};
+Point(9) = {-notch_width, 0, 0, m_size_fine};
 
 // lines of the outer box:
 // Bottom
@@ -28,14 +33,23 @@ Line(4) = {5, 7};
 Line(5) = {7, 3};
 // top
 Line(6) = {3, 4};
-Line(7) = {4, 1};
+// Left
+Line(7) = {4, 8};
+Line(8) = {8, 9};
+Line(9) = {8, 1};
 
 //
-Line Loop(8) = {1, 2, 3, 4, 5, 6, 7};
-Plane Surface(9) = {8};
+Line Loop(10) = {1, 2, 3, 4, 5, 6, 7, 8, -8, 9};
+Plane Surface(1) = {10};
+
+// these define the boundary indicators in deal.II:
+Physical Line(0) = {7, 9}; // Left
+Physical Line(1) = {2, 5}; // Right
+Physical Line(2) = {1}; // Bottom
+Physical Line(3) = {6}; // Top
 
 // you need the physical surface, because that is what deal.II reads in
-Physical Surface(10) = {9};
+Physical Surface(11) = {10};
 
 // some parameters for the meshing:
 Mesh.Algorithm = 8;

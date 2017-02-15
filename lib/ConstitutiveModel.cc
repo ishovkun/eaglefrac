@@ -183,7 +183,7 @@ namespace constitutive_model {
     // Assert no nonzero values
     for (int i=0; i<dim; ++ i)
       for (int j=0; j<dim; ++ j)
-        if (std::isnan(p_matrix_du[i][j]))
+        if (std::isnan(p_matrix_du[i][j]) || std::isinf(p_matrix_du[i][j]))
                   p_matrix_du[i][j] = 0;
 
   }  // EOM
@@ -285,6 +285,12 @@ namespace constitutive_model {
     assemble_eigenvector_matrix_derivative(strain_tensor, eps_u_i,
                                            lambda_matrix, lambda_matrix_du,
                                            p_matrix_du);
+
+    // std::cout << p_matrix_du[0][0] << "\t"
+    //           << p_matrix_du[0][1] << "\t"
+    //           << p_matrix_du[1][0] << "\t"
+    //           << p_matrix_du[1][1] << "\t"
+    //           << std::endl;
 
     eps_u_plus_i =
       (p_matrix_du*(lambda_matrix*transpose(p_matrix))) +

@@ -77,26 +77,32 @@ namespace pds_solid
   template <int dim>
   void PDSSolid<dim>::create_mesh()
   {
-    // Tensor<1, dim> point_1, point_2;
-
-    // double domain_length = 10, domain_width=10;
-
-    // for(int i=0; i<dim; ++i){
-    //   point_1[i] += domain_length/2;
-    //   point_2[i] -= domain_width/2;
-    // }
-
-    // Point<dim> p1(point_1), p2(point_2);
-
-    // GridGenerator::hyper_rectangle
-    //   (triangulation, p1, p2,
-    //    /*colorize = */ true);
-    // // GridGenerator::hyper_cube(triangulation);
-    // // triangulation.set_all_manifold_ids(0);
+    double half_length = 0.005;
     GridGenerator::hyper_cube_slit(triangulation,
-                                   0, 0.01, true);
+                                   0, half_length,
+                                   /*colorize = */ false);
+    const Point<dim> top(0, half_length);
+    const Point<dim> bottom(0, -half_length);
 
-    int initial_refinement_level = 4;
+    {// Assign boundary ids
+      typename Triangulation<2>::active_cell_iterator
+        cell = triangulation.begin_active(),
+        endc = triangulation.end();
+
+      for (; cell != endc; ++cell)
+        for (unsigned int face_no = 0;
+             face_no < GeometryInfo<dim>::faces_per_cell;
+             ++face_no)
+          if (cell->face(face_no)->at_boundary())
+            {
+              if (std::fabs(cell->face(face_no)->center()[1] - top[1]) < 1e-12)
+                cell->face(face_no)->set_boundary_id(2);
+              if (std::fabs(cell->face(face_no)->center()[1] - bottom[1]) < 1e-12)
+                cell->face(face_no)->set_boundary_id(1);
+            }
+    }
+
+    int initial_refinement_level = 5;
     triangulation.refine_global(initial_refinement_level);
   }
 
@@ -107,8 +113,11 @@ namespace pds_solid
     std::vector<double> displacement_values(n_displacement_conditions);
     for (int i=0; i<n_displacement_conditions; ++i)
       displacement_values[i] = data.displacement_boundary_velocities[i]*time;
+    // pcout << displacement_values[0] << std::endl;
+    // std::cout << displacement_values[1] << "\n";
     phase_field_solver.impose_displacement(displacement_values);
-  }
+  }  // eom
+
 
   template <int dim>
   void PDSSolid<dim>::run()
@@ -116,10 +125,15 @@ namespace pds_solid
     create_mesh();
     // read_mesh();
     phase_field_solver.setup_dofs();
+
+    // set initial phase-field to 1
+    phase_field_solver.solution.block(1) = 1;
+
     int time_step_number = 0;
     double time = 1, t_max = 3, time_step = 1;
     while(time < t_max)
       {
+        pcout << "Time: " << time << std::endl;
         phase_field_solver.old_old_solution = phase_field_solver.old_solution;
         phase_field_solver.old_solution = phase_field_solver.solution;
 
@@ -127,19 +141,21 @@ namespace pds_solid
         impose_displacement_on_solution(time);
 
         int n_iter = 1;
-        int max_newton_iter = 10;
+        int max_newton_iter = 20;
         double newton_tolerance = 1e-6;
         while (n_iter < max_newton_iter)
           {
+            pcout << "Newton iteration: " << n_iter << "\t";
             if (n_iter > 1)
               {
+                // Compute full residual
+                phase_field_solver.compute_residual();
                 phase_field_solver.compute_active_set();
+                // Compute reduced residual and error
                 double error = phase_field_solver.compute_residual();
-                pcout << "error = " << error << std::endl;
+                pcout << "error = " << error << "\t";
                 if ((phase_field_solver.active_set == old_active_set) &&
-                    (error < newton_tolerance)
-                    // 1
-                    )
+                    (error < newton_tolerance))
                   {
                     pcout << "Cool" << std::endl;
                     break;
@@ -149,6 +165,7 @@ namespace pds_solid
 
             phase_field_solver.assemble_system();
             phase_field_solver.solve();
+            phase_field_solver.solution_update *= 0.6;
             phase_field_solver.solution += phase_field_solver.solution_update;
 
             n_iter++;
@@ -181,6 +198,8 @@ namespace pds_solid
                              solution_names,
                              DataOut<dim>::type_dof_data,
                              data_component_interpretation);
+    // add active set
+    data_out.add_data_vector(phase_field_solver.active_set, "active_set");
     // Add domain ids
     Vector<float> subdomain(triangulation.n_active_cells());
     for (unsigned int i=0; i<subdomain.size(); ++i)
@@ -188,12 +207,17 @@ namespace pds_solid
     data_out.add_data_vector(subdomain, "subdomain");
     data_out.build_patches();
 
+    int n_time_step_digits = 3,
+        n_processor_digits = 3;
+
     // Write output from local processors
     const std::string filename = ("solution/solution-" +
-                                  Utilities::int_to_string(time_step_number, 3) +
+                                  Utilities::int_to_string(time_step_number,
+                                                           n_time_step_digits) +
                                   "." +
                                   Utilities::int_to_string
-                                  (triangulation.locally_owned_subdomain(), 3));
+                                  (triangulation.locally_owned_subdomain(),
+                                   n_processor_digits));
     std::ofstream output ((filename + ".vtu").c_str());
     data_out.write_vtu(output);
 
@@ -204,13 +228,16 @@ namespace pds_solid
         for (unsigned int i=0;
              i<Utilities::MPI::n_mpi_processes(mpi_communicator);
              ++i)
-          filenames.push_back ("solution/solution-" +
-                               Utilities::int_to_string(time_step_number, 3) +
-                               "." +
-                               Utilities::int_to_string (i, 3) +
-                               ".vtu");
+          filenames.push_back("solution-" +
+                              Utilities::int_to_string(time_step_number,
+                                                       n_time_step_digits) +
+                              "." +
+                              Utilities::int_to_string (i,
+                                                        n_processor_digits) +
+                              ".vtu");
         std::ofstream master_output(("solution/solution-" +
-                                     Utilities::int_to_string(time_step_number, 3) +
+                                     Utilities::int_to_string(time_step_number,
+                                                              n_time_step_digits) +
                                      ".pvtu").c_str());
         data_out.write_pvtu_record(master_output, filenames);
       }  // end master output

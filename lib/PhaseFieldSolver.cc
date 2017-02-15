@@ -37,7 +37,6 @@ namespace phase_field
 
   const double mu = 1000, lambda = 1e6;
   const double kappa = 1e-12, gamma_c = 1;
-  const double penalty_parameter = 1;
 
   template <int dim>
   class PhaseFieldSolver
@@ -78,7 +77,7 @@ namespace phase_field
 
     IndexSet locally_owned_dofs;
 
-    TrilinosWrappers::MPI::BlockVector residual, rhs_vector, reduced_rhs_vector;
+    TrilinosWrappers::MPI::BlockVector rhs_vector, reduced_rhs_vector;
     TrilinosWrappers::MPI::BlockVector mass_matrix_diagonal;
 
     TrilinosWrappers::BlockSparseMatrix system_matrix, reduced_system_matrix;
@@ -90,7 +89,7 @@ namespace phase_field
   public:
     double time_step;
     IndexSet active_set;
-    TrilinosWrappers::MPI::BlockVector solution, solution_update;
+    TrilinosWrappers::MPI::BlockVector solution, solution_update, residual;
     TrilinosWrappers::MPI::BlockVector old_solution, old_old_solution;
   };
 
@@ -176,15 +175,32 @@ namespace phase_field
       DoFTools::make_hanging_node_constraints(dof_handler,
                                               physical_constraints);
 
-      // impose dirichlet conditions
-      FEValuesExtractors::Vector displacement(0);
-      ComponentMask mask = fe.component_mask(displacement);
-      // TODO: constraints the appropriate boundaries with right components
-      VectorTools::interpolate_boundary_values(dof_handler,
-                                               0,
-                                               ZeroFunction<dim>(dim+1),
-                                               physical_constraints,
-                                               mask);
+      /*
+        Impose dirichlet conditions:
+        we set the components of those displacements, that are imposed on the
+        solution, to zero
+      */
+      // Extract displacement components
+      std::vector<FEValuesExtractors::Scalar> displacement_masks(dim);
+      for (int i=0; i<dim; ++i)
+        {
+          const FEValuesExtractors::Scalar comp(i);
+          displacement_masks[i] = comp;
+        }
+
+      int n_dirichlet_conditions = data.displacement_boundary_labels.size();
+
+      for (int cond=0; cond<n_dirichlet_conditions; ++cond)
+        {
+          int component = data.displacement_boundary_components[cond];
+          VectorTools::interpolate_boundary_values
+            (dof_handler,
+             data.displacement_boundary_labels[cond],
+             ZeroFunction<dim>(dim+1),
+             physical_constraints,
+             fe.component_mask(displacement_masks[component]));
+        } // end loop over dirichlet conditions
+
       physical_constraints.close();
 
       all_constraints.clear();
@@ -234,8 +250,10 @@ namespace phase_field
       IndexSet::ElementIterator
         index = locally_owned_dofs.begin(),
         end_index = locally_owned_dofs.end();
+
       for (; index!=end_index; ++index)
         mass_matrix_diagonal(*index) = mass_matrix.diag_element(*index);
+
       mass_matrix_diagonal.compress(VectorOperation::insert);
     }
 
@@ -311,7 +329,6 @@ namespace phase_field
     const FEValuesExtractors::Vector displacement(0);
     const FEValuesExtractors::Scalar phase_field(dim);
 
-
     // FeValues containers
     Tensor<2,dim>	eps_u_i, eps_u_j;
     Tensor<1,dim> grad_xi_phi_i, grad_xi_phi_j;
@@ -354,65 +371,66 @@ namespace phase_field
           fe_values[phase_field].get_function_gradients(solution,
                                                         grad_phi_values);
 
-          for (unsigned int q=0; q<n_q_points; ++q) {
-            convert_to_tensor(strain_tensor_values[q], strain_tensor);
-            stress_decomposition.get_stress_decomposition(strain_tensor,
-                                                          data.lame_constant,
-                                                          data.shear_modulus,
-                                                          stress_tensor_plus,
-                                                          stress_tensor_minus);
-            // TODO: include time into here
-            double d_phi = old_phi_values[q] - old_old_phi_values[q];
-            double phi_e = old_phi_values[q] + d_phi;  // extrapolated
-            double phi = phi_values[q];
-            double jxw = fe_values.JxW(q);
+          for (unsigned int q=0; q<n_q_points; ++q)
+            {
+              convert_to_tensor(strain_tensor_values[q], strain_tensor);
+              stress_decomposition.get_stress_decomposition(strain_tensor,
+                                                            data.lame_constant,
+                                                            data.shear_modulus,
+                                                            stress_tensor_plus,
+                                                            stress_tensor_minus);
+              // TODO: include time into here
+              double d_phi = old_phi_values[q] - old_old_phi_values[q];
+              double phi_e = old_phi_values[q] + d_phi;  // extrapolated
+              double phi = phi_values[q];
+              double jxw = fe_values.JxW(q);
 
-            for (unsigned int i=0; i<dofs_per_cell; ++i)
-              {
-                eps_u_i = fe_values[displacement].symmetric_gradient(i, q);
+              for (unsigned int i=0; i<dofs_per_cell; ++i)
+                {
+                  eps_u_i = fe_values[displacement].symmetric_gradient(i, q);
 
-                // that's for the pressure term, don't remove it
-                // double div_phi_i = fe_values[displacement].divergence(i, q);
+                  // that's for the pressure term, don't remove it
+                  // double div_phi_i = fe_values[displacement].divergence(i, q);
 
-                double xi_phi_i = fe_values[phase_field].value(i ,q);
-                grad_xi_phi_i = fe_values[phase_field].gradient(i, q);
+                  double xi_phi_i = fe_values[phase_field].value(i ,q);
+                  grad_xi_phi_i = fe_values[phase_field].gradient(i, q);
 
-                local_rhs[i] +=
-                  (
-                   ((1 - kappa)*phi_e*phi_e + kappa)*
+                  local_rhs[i] +=
+                    (
+                     ((1 - kappa)*phi_e*phi_e + kappa)*
                      scalar_product(stress_tensor_plus, eps_u_i)
-                   + scalar_product(stress_tensor_minus, eps_u_i)
-                  +
-                   (1 - kappa)*phi*xi_phi_i*
-                   scalar_product(stress_tensor_plus, strain_tensor)
-                  + gamma_c*(-1/e*(1 - phi)*xi_phi_i +
-                             e*grad_phi_values[q]*grad_xi_phi_i)
-                   ) * jxw;
+                     + scalar_product(stress_tensor_minus, eps_u_i)
+                     +
+                     (1 - kappa)*phi*xi_phi_i*
+                     scalar_product(stress_tensor_plus, strain_tensor)
+                     + gamma_c*(-1/e*(1 - phi)*xi_phi_i +
+                                e*grad_phi_values[q]*grad_xi_phi_i)
+                     ) * jxw;
 
-                // Find sigma_plus_du, and sigma_minus_du
-                stress_decomposition.get_stress_decomposition_derivatives
-                  (strain_tensor,
-                   eps_u_i,
-                   data.lame_constant,
-                   data.shear_modulus,
-                   sigma_u_plus_i,
-                   sigma_u_minus_i);
-                // pcout << sigma_u_plus_i[i][j] << std::endl;
+                  // Find sigma_plus_du, and sigma_minus_du
+                  stress_decomposition.get_stress_decomposition_derivatives
+                    (strain_tensor,
+                     eps_u_i,
+                     data.lame_constant,
+                     data.shear_modulus,
+                     sigma_u_plus_i,
+                     sigma_u_minus_i);
+                  // pcout << sigma_u_plus_i[i][j] << std::endl;
 
-                // pcout << scalar_product(stress_tensor_plus, eps_u_i) << "\t"
-                //       << scalar_product(stress_tensor_minus, eps_u_i) << std::endl;
-                // pcout << local_rhs[i] << std::endl;
-                // if (std::isnan(sigma_u_plus_i[0][0]))
-                //   pcout << "Nan: " << i << std::endl;
+                  // pcout << scalar_product(stress_tensor_plus, eps_u_i) << "\t"
+                  //       << scalar_product(stress_tensor_minus, eps_u_i) << std::endl;
+                  // pcout << local_rhs[i] << std::endl;
+                  // if (std::isnan(sigma_u_plus_i[0][0]))
+                  //   pcout << "Nan: " << i << std::endl;
 
-                // Assemble local matrix
-                for (unsigned int j=0; j<dofs_per_cell; ++j)
-                  {
-                    double xi_phi_j = fe_values[phase_field].value(j ,q);
-                    grad_xi_phi_j = fe_values[phase_field].gradient(j, q);
-                    eps_u_j = fe_values[displacement].symmetric_gradient(j, q);
+                  // Assemble local matrix
+                  for (unsigned int j=0; j<dofs_per_cell; ++j)
+                    {
+                      double xi_phi_j = fe_values[phase_field].value(j ,q);
+                      grad_xi_phi_j = fe_values[phase_field].gradient(j, q);
+                      eps_u_j = fe_values[displacement].symmetric_gradient(j, q);
 
-                    local_matrix(i, j) +=
+                      local_matrix(i, j) +=
                       (
                        ((1-kappa)*phi_e*phi_e + kappa)
                        *scalar_product(sigma_u_plus_i, eps_u_j)
@@ -429,11 +447,11 @@ namespace phase_field
                                 e*grad_xi_phi_i*grad_xi_phi_j)
                       ) * jxw;
 
-                    prec_local_matrix(i, j) += (xi_phi_i*xi_phi_j*jxw);
+                      prec_local_matrix(i, j) += (xi_phi_i*xi_phi_j*jxw);
 
-                  }  // end j loop
-              }  // end i loop
-          }  // end q loop
+                    }  // end j loop
+                }  // end i loop
+            }  // end q loop
 
           cell->get_dof_indices(local_dof_indices);
 
@@ -542,9 +560,9 @@ namespace phase_field
 
     for (; index!=end_index; ++index)
       {
-        unsigned int i = *index;
+        const unsigned int i = *index;
         if (residual[i]/mass_matrix_diagonal[i] +
-            penalty_parameter*solution_update[i] > 0)
+            data.penalty_parameter*solution_update[i] > 0)
           {
             active_set.add_index(i);
             all_constraints.add_line(i);
@@ -563,8 +581,7 @@ namespace phase_field
   template <int dim>
   double PhaseFieldSolver<dim>::compute_residual()
   {
-    reduced_system_matrix.residual(residual, solution_update, reduced_rhs_vector);
-    return residual.l2_norm();
+    return system_matrix.residual(residual, solution_update, rhs_vector);
   }  // EOM
 
   template <int dim>
@@ -573,34 +590,36 @@ namespace phase_field
   {
     computing_timer.enter_section("Imposing displacement values");
 
-    const unsigned int dofs_per_cell = fe.dofs_per_cell;
-    std::vector<types::global_dof_index> local_dof_indices(dofs_per_cell);
-    const int n_dirichlet_conditions = displacement_values.size();
+    // Extract displacement components
+    std::vector<FEValuesExtractors::Scalar> displacement_masks(dim);
+    for (int i=0; i<dim; ++i)
+      {
+        const FEValuesExtractors::Scalar comp(i);
+        displacement_masks[i] = comp;
+      }
 
-    typename DoFHandler<dim>::active_cell_iterator
-      cell = dof_handler.begin_active(),
-      endc = dof_handler.end();
+    // container for displacement boundary values
+    std::map<types::global_dof_index, double> boundary_values;
+    int n_dirichlet_conditions = data.displacement_boundary_labels.size();
 
-    for (; cell!=endc; ++cell)
-      if (cell->is_locally_owned())
-        for (unsigned int f=0; f<GeometryInfo<dim>::faces_per_cell; ++f)
-          if (cell->face(f)->at_boundary())
-            {
-              int face_boundary_id = cell->face(f)->boundary_id();
+    // Store BC's in the container "boundary_values"
+    for (int cond=0; cond<n_dirichlet_conditions; ++cond)
+      {
+        int component = data.displacement_boundary_components[cond];
+        double dirichlet_value = displacement_values[cond];
+        VectorTools::interpolate_boundary_values
+          (dof_handler,
+           data.displacement_boundary_labels[cond],
+           ConstantFunction<dim>(dirichlet_value, dim+1),
+           boundary_values,
+           fe.component_mask(displacement_masks[component]));
+      }
 
-            // loop through different boundary labels
-            for (int l=0; l<n_dirichlet_conditions; ++l)
-              {
-                int id = data.displacement_boundary_labels[l];
-                if(face_boundary_id == id)
-                  for (unsigned int i=0; i<dofs_per_cell; ++i)
-                    {
-                    const int component_i = fe.system_to_component_index(i).first;
-                    if (component_i == data.displacement_boundary_components[l])
-                      solution(local_dof_indices[i]) = displacement_values[i];
-                    }  // end of component loop
-              } // end loop through components
-            } // end if cell @ boundary
+    // Apply BC values to the solution vector
+    for (std::map<types::global_dof_index, double>::const_iterator
+           p = boundary_values.begin();
+         p != boundary_values.end(); ++p)
+      solution(p->first) = p->second;
 
     solution.compress(VectorOperation::insert);
     computing_timer.exit_section();
@@ -650,7 +669,7 @@ namespace phase_field
     solver.solve(system_matrix, solution_update, rhs_vector,
                  preconditioner);
 
-    pcout << "   Solved in " << solver_control.last_step()
+    pcout << "Solved in " << solver_control.last_step()
           << " iterations." << std::endl;
     all_constraints.distribute(solution_update);
 

@@ -56,6 +56,8 @@ namespace input_data {
     displacement_boundary_velocities = {0, 1e-3};
     regularization_parameter_epsilon = 1;
     penalty_parameter = 0.25;
+    regularization_parameter_kappa = 1e-12;
+    energy_release_rate = 1;
   }  // EOM
 
 }  // end of namespace

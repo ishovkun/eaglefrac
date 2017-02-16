@@ -148,11 +148,9 @@ namespace pds_solid
             pcout << "Newton iteration: " << n_iter << "\t";
             if (n_iter > 1)
               {
-                // Compute full residual
                 phase_field_solver.compute_residual();
                 phase_field_solver.compute_active_set();
-                // Compute reduced residual and error
-                double error = phase_field_solver.compute_residual();
+                double error = phase_field_solver.residual_norm();
                 pcout << "error = " << error << "\t";
                 if ((phase_field_solver.active_set == old_active_set) &&
                     (error < newton_tolerance))

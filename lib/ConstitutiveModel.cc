@@ -276,21 +276,14 @@ namespace constitutive_model {
                                        Tensor<2,dim>       &sigma_u_plus_i,
                                        Tensor<2,dim>       &sigma_u_minus_i)
   {
-    // Already done for q points
-    // assemble_eigenvalue_matrix(strain_tensor, lambda_matrix);
-    // assemble_eigenvector_matrix(strain_tensor, lambda_matrix, p_matrix);
+    assemble_eigenvalue_matrix(strain_tensor, lambda_matrix);
+    assemble_eigenvector_matrix(strain_tensor, lambda_matrix, p_matrix);
 
     assemble_eigenvalue_matrix_derivative(strain_tensor, eps_u_i,
                                           lambda_matrix, lambda_matrix_du);
     assemble_eigenvector_matrix_derivative(strain_tensor, eps_u_i,
                                            lambda_matrix, lambda_matrix_du,
                                            p_matrix_du);
-
-    // std::cout << p_matrix_du[0][0] << "\t"
-    //           << p_matrix_du[0][1] << "\t"
-    //           << p_matrix_du[1][0] << "\t"
-    //           << p_matrix_du[1][1] << "\t"
-    //           << std::endl;
 
     eps_u_plus_i =
       (p_matrix_du*(lambda_matrix*transpose(p_matrix))) +

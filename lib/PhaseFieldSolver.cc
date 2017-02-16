@@ -227,7 +227,8 @@ namespace phase_field
       Table<2,DoFTools::Coupling> coupling(dim+1, dim+1);
       for (unsigned int c=0; c<dim+1; ++c)
         for (unsigned int d=0; d<dim+1; ++d)
-          if ((c<dim || d<dim) || ((c==dim) && (d==dim)) ||
+          if ((c<dim && d<dim) ||
+              ((c==dim) && (d==dim)) ||
               ((c<dim) && d==dim))
             coupling[c][d] = DoFTools::always;
           else
@@ -322,30 +323,38 @@ namespace phase_field
                             update_values | update_gradients |
                             update_quadrature_points |
                             update_JxW_values);
+
     const unsigned int dofs_per_cell   = fe.dofs_per_cell;
     const unsigned int n_q_points      = quadrature_formula.size();
+
     FullMatrix<double>   local_matrix(dofs_per_cell, dofs_per_cell),
                          prec_local_matrix(dofs_per_cell, dofs_per_cell);
     Vector<double>       local_rhs(dofs_per_cell);
+
     std::vector<types::global_dof_index> local_dof_indices(dofs_per_cell);
 
     const FEValuesExtractors::Vector displacement(0);
     const FEValuesExtractors::Scalar phase_field(dim);
 
     // FeValues containers
-    Tensor<2,dim>	eps_u_i, eps_u_j;
-    Tensor<1,dim> grad_xi_phi_i, grad_xi_phi_j;
+    std::vector< Tensor<2,dim> > eps_u(dofs_per_cell);
+    std::vector< Tensor<1,dim> > grad_xi_phi(dofs_per_cell);
     std::vector< Tensor<1,dim> > grad_phi_values(n_q_points);
+
     // Solution values containers
     std::vector< SymmetricTensor<2,dim> > strain_tensor_values(n_q_points);
-    Tensor<2, dim> strain_tensor;
+    Tensor<2, dim> strain_tensor_value;
     std::vector<double> phi_values(n_q_points),
                         old_phi_values(n_q_points),
                         old_old_phi_values(n_q_points);
+    std::vector<double> xi_phi(dofs_per_cell);
+
     // Stress decomposition containers
     constitutive_model::EnergySpectralDecomposition<dim> stress_decomposition;
     Tensor<2, dim> stress_tensor_plus, stress_tensor_minus;
-    Tensor<2, dim> sigma_u_plus_j, sigma_u_minus_j;
+    std::vector< Tensor<2, dim> >
+      sigma_u_plus(dofs_per_cell),
+      sigma_u_minus(dofs_per_cell);
 
     // Equation data
     double kappa = data.regularization_parameter_kappa;
@@ -367,6 +376,7 @@ namespace phase_field
           prec_local_matrix = 0;
 
           fe_values.reinit(cell);
+
           fe_values[displacement].get_function_symmetric_gradients
             (solution, strain_tensor_values);
 
@@ -381,8 +391,8 @@ namespace phase_field
 
           for (unsigned int q=0; q<n_q_points; ++q)
             {
-              convert_to_tensor(strain_tensor_values[q], strain_tensor);
-              stress_decomposition.get_stress_decomposition(strain_tensor,
+              convert_to_tensor(strain_tensor_values[q], strain_tensor_value);
+              stress_decomposition.get_stress_decomposition(strain_tensor_value,
                                                             data.shear_modulus,
                                                             data.lame_constant,
                                                             stress_tensor_plus,
@@ -390,78 +400,77 @@ namespace phase_field
               // TODO: include time into here
               double d_phi = old_phi_values[q] - old_old_phi_values[q];
               double phi_e = old_phi_values[q] + d_phi;  // extrapolated
-              double phi = phi_values[q];
+              double phi_value = phi_values[q];
               double jxw = fe_values.JxW(q);
+
+              for (unsigned int k=0; k<dofs_per_cell; ++k)
+                {
+                  eps_u[k] = fe_values[displacement].symmetric_gradient(k, q);
+                  xi_phi[k] = fe_values[phase_field].value(k ,q);
+                  grad_xi_phi[k] = fe_values[phase_field].gradient(k, q);
+                }  // end k loop
 
               for (unsigned int i=0; i<dofs_per_cell; ++i)
                 {
-                  eps_u_i = fe_values[displacement].symmetric_gradient(i, q);
-
-                  double xi_phi_i = fe_values[phase_field].value(i ,q);
-                  grad_xi_phi_i = fe_values[phase_field].gradient(i, q);
-
-                  double rhs_u_i =
+                  double rhs_u =
                     ((1 - kappa)*phi_e*phi_e + kappa)
-                    * scalar_product(stress_tensor_plus, eps_u_i)
+                    * scalar_product(stress_tensor_plus, eps_u[i])
                     +
-                    scalar_product(stress_tensor_minus, eps_u_i);
+                    scalar_product(stress_tensor_minus, eps_u[i]);
 
-                  double rhs_phi_i =
-                    (1 - kappa)*phi*xi_phi_i
-                    * scalar_product(stress_tensor_plus, strain_tensor)
+                  double rhs_phi =
+                    (1 - kappa)*phi_value*xi_phi[i]
+                    * scalar_product(stress_tensor_plus, strain_tensor_value)
                     +
                     gamma_c*(
-                     -(1. - phi)*xi_phi_i/e
-                     + e*scalar_product(grad_phi_values[q], grad_xi_phi_i)
+                     -(1. - phi_value)*xi_phi[i]/e
+                     + e*scalar_product(grad_phi_values[q], grad_xi_phi[i])
                     );
 
-                  local_rhs[i] -= (rhs_u_i + rhs_phi_i)*jxw;
+                  local_rhs[i] -= (rhs_u + rhs_phi)*jxw;
+
+                  // Find sigma_plus_du, and sigma_minus_du
 
                   bool rhs_sign = std::signbit(-local_rhs[i]);
-
-                  // Assemble local matrix
-                  for (unsigned int j=0; j<dofs_per_cell; ++j)
-                    {
-                      double xi_phi_j = fe_values[phase_field].value(j ,q);
-                      grad_xi_phi_j = fe_values[phase_field].gradient(j, q);
-                      eps_u_j = fe_values[displacement].symmetric_gradient(j, q);
-
-                      // Find sigma_plus_du, and sigma_minus_du
-                      stress_decomposition.get_stress_decomposition_derivatives
-                        (strain_tensor,
-                         eps_u_j,
-                         data.shear_modulus,
-                         data.lame_constant,
-                         rhs_sign,
-                         sigma_u_plus_j,
-                         sigma_u_minus_j);
-
-                      // Parts of the cell matrix
-                      double m_u_u =
-                        ((1 - kappa)*phi_e*phi_e + kappa)
-                        *scalar_product(sigma_u_plus_j, eps_u_i)
-                        +
-                        scalar_product(sigma_u_minus_j, eps_u_i);
-
-                      double m_phi_u =
-                        2*(1 - kappa)*phi*xi_phi_i
-                        *scalar_product(sigma_u_plus_j, strain_tensor);
-
-                      // double m_u_phi = 0;
-
-                      double m_phi_phi =
-                        (1-kappa)*xi_phi_j*xi_phi_i
-                        *scalar_product(stress_tensor_plus, strain_tensor)
-                        +
-                        gamma_c*(xi_phi_j*xi_phi_i/e +
-                                 e*scalar_product(grad_xi_phi_j, grad_xi_phi_i));
-
-                      local_matrix(i, j) += (m_u_u + m_phi_u + m_phi_phi) * jxw;
-
-                      prec_local_matrix(i, j) += (xi_phi_i*xi_phi_j*jxw);
-
-                    }  // end j loop
+                  stress_decomposition.get_stress_decomposition_derivatives
+                    (strain_tensor_value,
+                     eps_u[i],
+                     data.shear_modulus,
+                     data.lame_constant,
+                     rhs_sign,
+                     sigma_u_plus[i],
+                     sigma_u_minus[i]);
                 }  // end i loop
+
+              // Assemble local matrix
+              for (unsigned int i=0; i<dofs_per_cell; ++i)
+                for (unsigned int j=0; j<dofs_per_cell; ++j)
+                  {
+                    double m_u_u =
+                      ((1-kappa)*phi_e*phi_e + kappa)
+                      *scalar_product(sigma_u_plus[j], eps_u[i])
+                      +
+                      scalar_product(sigma_u_minus[j], eps_u[i]);
+
+                    double m_phi_u =
+                      2*(1-kappa)*phi_value*xi_phi[i]
+                      *scalar_product(sigma_u_plus[j], strain_tensor_value);
+
+                    // double m_u_phi = 0;
+
+                    double m_phi_phi =
+                      (1-kappa)*xi_phi[j]*xi_phi[i]
+                      *scalar_product(stress_tensor_plus, strain_tensor_value)
+                      +
+                      gamma_c*(xi_phi[j]*xi_phi[i]/e +
+                               e*scalar_product(grad_xi_phi[j], grad_xi_phi[i])
+                               );
+
+                    local_matrix(i, j) += (m_u_u + m_phi_u + m_phi_phi) * jxw;
+
+                    prec_local_matrix(i, j) += (xi_phi[i]*xi_phi[j]*jxw);
+
+                  }  // end j loop
             }  // end q loop
 
           cell->get_dof_indices(local_dof_indices);

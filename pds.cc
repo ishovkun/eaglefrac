@@ -113,8 +113,6 @@ namespace pds_solid
     std::vector<double> displacement_values(n_displacement_conditions);
     for (int i=0; i<n_displacement_conditions; ++i)
       displacement_values[i] = data.displacement_boundary_velocities[i]*time;
-    // pcout << displacement_values[0] << std::endl;
-    // std::cout << displacement_values[1] << "\n";
     phase_field_solver.impose_displacement(displacement_values);
   }  // eom
 

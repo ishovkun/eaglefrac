@@ -102,7 +102,7 @@ namespace pds_solid
             }
     }
 
-    int initial_refinement_level = 5;
+    int initial_refinement_level = 4;
     triangulation.refine_global(initial_refinement_level);
   }
 
@@ -128,6 +128,7 @@ namespace pds_solid
 
     // set initial phase-field to 1
     phase_field_solver.solution.block(1) = 1;
+    phase_field_solver.old_solution.block(1) = 1;
 
     int time_step_number = 0;
     double time = 1, t_max = 3, time_step = 1;
@@ -141,7 +142,7 @@ namespace pds_solid
         impose_displacement_on_solution(time);
 
         int n_iter = 1;
-        int max_newton_iter = 20;
+        int max_newton_iter = 50;
         double newton_tolerance = 1e-6;
         while (n_iter < max_newton_iter)
           {
@@ -150,6 +151,9 @@ namespace pds_solid
               {
                 phase_field_solver.compute_residual();
                 phase_field_solver.compute_active_set();
+                pcout << "Size of active set: "
+                      << phase_field_solver.active_set.n_elements()
+                      << "\t";
                 double error = phase_field_solver.residual_norm();
                 pcout << "error = " << error << "\t";
                 if ((phase_field_solver.active_set == old_active_set) &&
@@ -163,7 +167,7 @@ namespace pds_solid
 
             phase_field_solver.assemble_system();
             phase_field_solver.solve();
-            phase_field_solver.solution_update *= 0.6;
+            phase_field_solver.solution_update *= 0.1;
             phase_field_solver.solution += phase_field_solver.solution_update;
 
             n_iter++;

@@ -51,11 +51,16 @@ namespace input_data {
   {
     young_modulus = 1e10;
     poisson_ratio = 0.3;
+    double E = young_modulus;
+    double nu = poisson_ratio;
+    lame_constant = E*nu/((1. + nu)*(1. - 2.*nu));
+    shear_modulus = 0.5*E/(1 + nu);
     displacement_boundary_labels = {1, 2};
     displacement_boundary_components = {1 ,1};
     displacement_boundary_velocities = {0, 1e-3};
     regularization_parameter_epsilon = 1;
-    penalty_parameter = 0.25;
+    // penalty_parameter = 0.25;
+    penalty_parameter = 100;
     regularization_parameter_kappa = 1e-12;
     energy_release_rate = 1;
   }  // EOM

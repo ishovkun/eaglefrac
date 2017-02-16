@@ -5,6 +5,7 @@
 
 #include <deal.II/lac/generic_linear_algebra.h>
 #include <deal.II/lac/solver_gmres.h>
+#include <deal.II/lac/trilinos_solver.h>
 
 #include <deal.II/lac/trilinos_block_sparse_matrix.h>
 #include <deal.II/lac/trilinos_block_vector.h>
@@ -49,7 +50,7 @@ namespace phase_field
 
     void setup_dofs();
     double compute_residual();
-    double residual_norm();
+    double residual_norm() const;
     void assemble_system();
     void compute_active_set();
     void impose_displacement(const std::vector<double> &displacement_values);
@@ -224,7 +225,8 @@ namespace phase_field
       Table<2,DoFTools::Coupling> coupling(dim+1, dim+1);
       for (unsigned int c=0; c<dim+1; ++c)
         for (unsigned int d=0; d<dim+1; ++d)
-          if ((c<dim) || ((c==dim) && (d==dim)))
+          if ((c<dim || d<dim) || ((c==dim) && (d==dim)) ||
+              ((c<dim) && d==dim))
             coupling[c][d] = DoFTools::always;
           else
             coupling[c][d] = DoFTools::none;
@@ -343,6 +345,13 @@ namespace phase_field
     Tensor<2, dim> stress_tensor_plus, stress_tensor_minus;
     Tensor<2, dim> sigma_u_plus_j, sigma_u_minus_j;
 
+    // Equation data
+    double kappa = data.regularization_parameter_kappa;
+    double e =
+      data.regularization_parameter_epsilon*min_cell_size;
+      // std::sqrt(min_cell_size);
+    double gamma_c = data.energy_release_rate;
+
     typename DoFHandler<dim>::active_cell_iterator
       cell = dof_handler.begin_active(),
       endc = dof_handler.end();
@@ -390,10 +399,6 @@ namespace phase_field
                   double xi_phi_i = fe_values[phase_field].value(i ,q);
                   grad_xi_phi_i = fe_values[phase_field].gradient(i, q);
 
-                  double kappa = data.regularization_parameter_kappa;
-                  double e = data.regularization_parameter_epsilon*min_cell_size;
-                  double gamma_c = data.energy_release_rate;
-
                   double rhs_u_i =
                     ((1 - kappa)*phi_e*phi_e + kappa)
                     * scalar_product(stress_tensor_plus, eps_u_i)
@@ -402,7 +407,7 @@ namespace phase_field
 
                   double rhs_phi_i =
                     (1 - kappa)*phi*xi_phi_i
-                    * scalar_product(stress_tensor_plus, eps_u_i)
+                    * scalar_product(stress_tensor_plus, strain_tensor)
                     +
                     gamma_c*(
                      -(1. - phi)*xi_phi_i/e
@@ -410,6 +415,8 @@ namespace phase_field
                     );
 
                   local_rhs[i] -= (rhs_u_i + rhs_phi_i)*jxw;
+
+                  bool rhs_sign = std::signbit(local_rhs[i]);
 
                   // Assemble local matrix
                   for (unsigned int j=0; j<dofs_per_cell; ++j)
@@ -424,6 +431,7 @@ namespace phase_field
                          eps_u_j,
                          data.lame_constant,
                          data.shear_modulus,
+                         rhs_sign,
                          sigma_u_plus_j,
                          sigma_u_minus_j);
 
@@ -433,10 +441,13 @@ namespace phase_field
                         *scalar_product(sigma_u_plus_j, eps_u_i)
                         +
                         scalar_product(sigma_u_minus_j, eps_u_i);
+
                       double m_phi_u =
                         2*(1 - kappa)*phi*xi_phi_i
                         *scalar_product(sigma_u_plus_j, strain_tensor);
+
                       // double m_u_phi = 0;
+
                       double m_phi_phi =
                         (1-kappa)*xi_phi_j*xi_phi_i
                         *scalar_product(stress_tensor_plus, strain_tensor)
@@ -585,7 +596,7 @@ namespace phase_field
 
 
   template <int dim>
-  double PhaseFieldSolver<dim>::residual_norm()
+  double PhaseFieldSolver<dim>::residual_norm() const
   {
     return residual.l2_norm();
   }
@@ -666,10 +677,11 @@ namespace phase_field
       preconditioner(prec_A, mp_inverse);
 
     // set up the linear solver and solve the system
-    SolverControl solver_control (system_matrix.m(),
+    SolverControl solver_control(system_matrix.m(),
                                   1e-10*rhs_vector.l2_norm());
 
-    SolverFGMRES<TrilinosWrappers::MPI::BlockVector>
+    // SolverFGMRES<TrilinosWrappers::MPI::BlockVector>
+    SolverGMRES<TrilinosWrappers::MPI::BlockVector>
       solver(solver_control);
 
     all_constraints.set_zero(solution_update);

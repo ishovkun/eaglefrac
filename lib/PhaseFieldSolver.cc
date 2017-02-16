@@ -25,6 +25,8 @@
 #include <deal.II/numerics/vector_tools.h>
 #include <deal.II/fe/fe_system.h>
 
+#include <cmath>        // std:: math functions
+
 // Custom modules
 #include <ConstitutiveModel.cc>
 #include <InputData.cc>
@@ -272,7 +274,7 @@ namespace phase_field
           if (c==dim && d==dim)
             coupling[c][d] = DoFTools::always;
           else
-            coupling[c][d] = DoFTools::none;
+            coupling[c][d] = DoFTools::always;
 
       DoFTools::make_sparsity_pattern(dof_handler, coupling, sp,
                                       physical_constraints,
@@ -348,8 +350,9 @@ namespace phase_field
     // Equation data
     double kappa = data.regularization_parameter_kappa;
     double e =
-      data.regularization_parameter_epsilon*min_cell_size;
-      // std::sqrt(min_cell_size);
+      data.penalty_parameter
+      *std::pow(min_cell_size, 0.2);
+
     double gamma_c = data.energy_release_rate;
 
     typename DoFHandler<dim>::active_cell_iterator
@@ -362,13 +365,11 @@ namespace phase_field
           local_rhs = 0;
           local_matrix = 0;
           prec_local_matrix = 0;
+
           fe_values.reinit(cell);
-          // right_hand_side.value_list(fe_values.get_quadrature_points(),
-          //                            rhs_values);
           fe_values[displacement].get_function_symmetric_gradients
             (solution, strain_tensor_values);
 
-          // get old phi solutions for extrapolation
           fe_values[phase_field].get_function_values(solution,
                                                      phi_values);
           fe_values[phase_field].get_function_values(old_solution,
@@ -382,8 +383,8 @@ namespace phase_field
             {
               convert_to_tensor(strain_tensor_values[q], strain_tensor);
               stress_decomposition.get_stress_decomposition(strain_tensor,
-                                                            data.lame_constant,
                                                             data.shear_modulus,
+                                                            data.lame_constant,
                                                             stress_tensor_plus,
                                                             stress_tensor_minus);
               // TODO: include time into here
@@ -416,7 +417,7 @@ namespace phase_field
 
                   local_rhs[i] -= (rhs_u_i + rhs_phi_i)*jxw;
 
-                  bool rhs_sign = std::signbit(local_rhs[i]);
+                  bool rhs_sign = std::signbit(-local_rhs[i]);
 
                   // Assemble local matrix
                   for (unsigned int j=0; j<dofs_per_cell; ++j)
@@ -429,8 +430,8 @@ namespace phase_field
                       stress_decomposition.get_stress_decomposition_derivatives
                         (strain_tensor,
                          eps_u_j,
-                         data.lame_constant,
                          data.shear_modulus,
+                         data.lame_constant,
                          rhs_sign,
                          sigma_u_plus_j,
                          sigma_u_minus_j);
@@ -487,9 +488,6 @@ namespace phase_field
     preconditioner_matrix.compress(VectorOperation::add);
     rhs_vector.compress(VectorOperation::add);
     reduced_rhs_vector.compress(VectorOperation::add);
-
-    // reduced_rhs_vector *= -1;
-    // reduced_rhs_vector.compress(VectorOperation::multiply);
 
     computing_timer.exit_section();
 

@@ -131,7 +131,7 @@ namespace pds_solid
     phase_field_solver.old_solution.block(1) = 1;
 
     int time_step_number = 0;
-    double time = 1, t_max = 3, time_step = 1;
+    double time = 0, t_max = 3, time_step = 1;
     while(time < t_max)
       {
         pcout << "Time: " << time << std::endl;
@@ -167,7 +167,7 @@ namespace pds_solid
 
             phase_field_solver.assemble_system();
             phase_field_solver.solve();
-            phase_field_solver.solution_update *= 0.1;
+            phase_field_solver.solution_update *= 0.6;
             phase_field_solver.solution += phase_field_solver.solution_update;
 
             n_iter++;

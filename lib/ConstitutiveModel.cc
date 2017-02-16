@@ -76,14 +76,11 @@ namespace constitutive_model {
   template <int dim> inline
   void assemble_eigenvalue_matrix_derivative(const Tensor<2,dim> &eps,
                                              const Tensor<2,dim> &eps_u,
-                                             const Tensor<2,dim> &lambda_matrix,
                                              Tensor<2,dim>       &lambda_matrix_du)
   {
     const double trace_eps = trace(eps);
     const double det_eps = determinant(eps);
     const double trace_eps_u = trace(eps_u);
-    const double lambda_1 = lambda_matrix[0][0],
-                 lambda_2 = lambda_matrix[1][1];
 
     // compute lambda_1_du and lambda_2_du
     double tmp = 0.5/std::sqrt(trace_eps*trace_eps/4 - det_eps) *
@@ -93,17 +90,12 @@ namespace constitutive_model {
     double lambda_1_du = trace_eps_u/2 + tmp;
     double lambda_2_du = trace_eps_u/2 - tmp;
 
-    if (lambda_1 > 0)
-      lambda_matrix_du[0][0] = lambda_1_du;
-    else
-      lambda_matrix_du[0][0] = 0;
-    if (lambda_2 > 0)
-      lambda_matrix_du[1][1] = lambda_2_du;
-    else
-      lambda_matrix_du[1][1] = 0;
+    // check for nans
+    if (!numbers::is_finite(lambda_1_du)) lambda_1_du = 0;
+    if (!numbers::is_finite(lambda_2_du)) lambda_2_du = 0;
 
-    // lambda_matrix_du[0][0] = lambda_1_du;
-    // lambda_matrix_du[1][1] = lambda_2_du;
+    lambda_matrix_du[0][0] = lambda_1_du;
+    lambda_matrix_du[1][1] = lambda_2_du;
     lambda_matrix_du[0][1] = 0;
     lambda_matrix_du[1][0] = 0;
 
@@ -144,15 +136,15 @@ namespace constitutive_model {
 
     // Compute entries
     p_matrix_du[0][0] = tmp11;
-    p_matrix_du[1][0] = tmp10*tmp11 + tmp12/std::sqrt(1 + tmp10);
+    p_matrix_du[1][0] = tmp10*tmp11 + tmp12/std::sqrt(1 + tmp10*tmp10);
     p_matrix_du[0][1] = tmp21;
-    p_matrix_du[1][1] = tmp20*tmp21 + tmp22/std::sqrt(1 + tmp20);
+    p_matrix_du[1][1] = tmp20*tmp21 + tmp22/std::sqrt(1 + tmp20*tmp20);
 
     // Assert no nonzero values
     for (int i=0; i<dim; ++ i)
       for (int j=0; j<dim; ++ j)
-        if (std::isnan(p_matrix_du[i][j]) || std::isinf(p_matrix_du[i][j]))
-                  p_matrix_du[i][j] = 0;
+        if (!numbers::is_finite(p_matrix_du[i][j]))
+          p_matrix_du[i][j] = 0;
 
   }  // EOM
 
@@ -179,8 +171,8 @@ namespace constitutive_model {
     // Assert that no nans
     for (int i=0; i<dim; ++ i)
       for (int j=0; j<dim; ++ j)
-        if (std::isnan(p_matrix[i][j]) || std::isinf(p_matrix[i][j]))
-          p_matrix[i][j] = 0;
+          if (!numbers::is_finite(p_matrix[i][j]))
+            p_matrix[i][j] = 0;
   }
 
 
@@ -250,29 +242,29 @@ namespace constitutive_model {
     assemble_eigenvector_matrix(strain_tensor, lambda_matrix, p_matrix);
 
     assemble_eigenvalue_matrix_derivative(strain_tensor, eps_u,
-                                          lambda_matrix, lambda_matrix_du);
+                                          lambda_matrix_du);
     assemble_eigenvector_matrix_derivative(strain_tensor, eps_u,
                                            lambda_matrix, lambda_matrix_du,
                                            p_matrix_du);
 
     if (rhs_sign)
       eps_u_plus_i =
-        (p_matrix_du*(lambda_matrix*transpose(p_matrix))) +
-        (p_matrix*(lambda_matrix_du*transpose(p_matrix))) +
-        (p_matrix*(lambda_matrix*transpose(p_matrix_du)));
+        p_matrix_du*lambda_matrix*transpose(p_matrix) +
+        p_matrix*lambda_matrix_du*transpose(p_matrix) +
+        p_matrix*lambda_matrix*transpose(p_matrix_du);
     else eps_u_plus_i = 0;
 
     double trace_eps_u = trace(eps_u);
     double trace_eps_u_plus = trace(eps_u_plus_i);
 
     sigma_u_plus = 2*mu*eps_u_plus_i;
-    sigma_u_plus[0][0] += lambda*trace_eps_u_plus;
-    sigma_u_plus[1][1] += lambda*trace_eps_u_plus;
-
     sigma_u_minus = 2*mu*(eps_u - eps_u_plus_i);
-    sigma_u_minus[0][0] += lambda*(trace_eps_u - trace_eps_u_plus);
-    sigma_u_minus[1][1] += lambda*(trace_eps_u - trace_eps_u_plus);
-
+    // Add diagonal terms
+    for (int i=0; i<dim; ++i)
+      {
+        sigma_u_plus[i][i] += lambda*trace_eps_u_plus;
+        sigma_u_minus[i][i] += lambda*(trace_eps_u - trace_eps_u_plus);
+      }
   }  // EOM
 
 }  // end of namespace

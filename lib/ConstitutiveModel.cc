@@ -85,23 +85,35 @@ namespace constitutive_model {
                                    const std::vector<double> &lambda,
                                    Tensor<2,dim>             &p_matrix)
   {
-    double tmp, tmp1;
-    tmp = (lambda[0] - eps[0][0])/eps[0][1];
-    tmp1 = 1./std::sqrt(1. + tmp*tmp);
-    p_matrix[0][0] = tmp1;
-    p_matrix[1][0] = tmp/tmp1;
+    p_matrix = 0; // clear values
 
-    tmp = (lambda[1] - eps[0][0])/eps[0][1];
-    tmp1 = 1./std::sqrt(1. + tmp*tmp);
-    p_matrix[0][1] = tmp1;
-    p_matrix[1][1] = tmp/tmp1;
+    if (numbers::is_finite(1./eps[0][1]))  // Tensor not diagonal
+      {
+        double tmp, tmp1;
+        tmp = (lambda[0] - eps[0][0])/eps[0][1];
+        tmp1 = 1./std::sqrt(1. + tmp*tmp);
+        p_matrix[0][0] = tmp1;
+        p_matrix[1][0] = tmp/tmp1;
 
-    // Assert that no nans
-    for (int i=0; i<dim; ++ i)
-      for (int j=0; j<dim; ++ j)
-        if (!numbers::is_finite(p_matrix[i][j]))
-          p_matrix[i][j] = 0;
-  }
+        tmp = (lambda[1] - eps[0][0])/eps[0][1];
+        tmp1 = 1./std::sqrt(1. + tmp*tmp);
+        p_matrix[0][1] = tmp1;
+        p_matrix[1][1] = tmp/tmp1;
+      }
+    else  // Tensor already diagonal
+      {
+        if(eps[0][0] >= eps[1][1])  // eigenvalues in the right order
+          {
+            p_matrix[0][0] = 1;
+            p_matrix[1][1] = 1;
+          }
+        else  // lambda matrix is a swapped eps matrix
+          {
+            p_matrix[0][1] = 1;
+            p_matrix[1][0] = 1;
+          }
+      }
+  }  // EOM
 
 
   template <int dim> inline
@@ -112,9 +124,15 @@ namespace constitutive_model {
     const double trace_eps = trace(eps);
     const double det_eps = determinant(eps);
     const double trace_eps_u = trace(eps_u);
-    double tmp = 0.5/std::sqrt(trace_eps*trace_eps/4 - det_eps) *
-      (eps_u[0][1]*eps[1][0] + eps[0][1]*eps_u[1][0] +
-       0.5*(eps[0][0] - eps[1][1])*(eps[0][0] - eps_u[1][1]));
+
+    double denom = 1/(2*std::sqrt(trace_eps*trace_eps/4 - det_eps));
+    double tmp;
+    if (numbers::is_finite(denom))
+        tmp = denom *
+        (eps_u[0][1]*eps[1][0] + eps[0][1]*eps_u[1][0] +
+         0.5*(eps[0][0] - eps[1][1])*(eps[0][0] - eps_u[1][1]));
+    else tmp = 0;
+
     lambda_du[0] = trace_eps_u/2 + tmp;
     lambda_du[1] = trace_eps_u/2 - tmp;
   }  // eof
@@ -127,13 +145,7 @@ namespace constitutive_model {
   {
     lambda_matrix_du = 0;
     for (int i=0; i<dim; ++i)
-      lambda_matrix_du[i][i] = (
-                                (lambda[i] > 0) &&
-                                !numbers::is_finite(lambda_du[i])
-                                ?
-                                lambda_du[i] : 0
-                                );
-
+      lambda_matrix_du[i][i] = ((lambda[i] > 0) ? lambda_du[i] : 0);
   }  // EOM
 
 
@@ -145,27 +157,41 @@ namespace constitutive_model {
                                          const std::vector<double> &lambda_du,
                                          Tensor<2,dim>             &p_matrix_du)
   {
-    // Compute entries
-    for (int i=0; i<dim; ++i)
-      {
-        double tmp0 = (lambda[i] - eps[0][0])/eps[0][1];
-        double tmp2 =
-          ((lambda_du[i] - eps_u[0][0])*eps[0][1] -
-           (lambda[i]    - eps[0][0])  *eps_u[0][1])
-          /(eps[0][1]*eps[0][1]);
-        double tmp1 = -1./(1.+tmp0*tmp0) / (2.*sqrt(tmp0*tmp0))
-          * 2.*tmp0 * tmp2;
+    p_matrix_du = 0; // clear values
+    if (numbers::is_finite(1./eps[0][1]))  // Tensor not diagonal
+      // Compute entries
+      for (int i=0; i<dim; ++i)
+        {
+          double tmp0 = (lambda[i] - eps[0][0])/eps[0][1];
+          double tmp2 =
+            ((lambda_du[i] - eps_u[0][0])*eps[0][1] -
+             (lambda[i]    - eps[0][0])  *eps_u[0][1])
+            /(eps[0][1]*eps[0][1]);
+          double tmp1 = -1./(1.+tmp0*tmp0) / (2.*sqrt(tmp0*tmp0))
+            * 2.*tmp0 * tmp2;
 
-        p_matrix_du[0][i] = tmp1;
-        p_matrix_du[1][i] = tmp0*tmp1 + tmp2/std::sqrt(1 + tmp0*tmp0);
+          p_matrix_du[0][i] = tmp1;
+          p_matrix_du[1][i] = tmp0*tmp1 + tmp2/std::sqrt(1 + tmp0*tmp0);
+        }
+    else  // Tensor already diagonal
+      {
+        if(eps[0][0] >= eps[1][1])  // eigenvalues in the right order
+          {
+            p_matrix_du[0][0] = 1;
+            p_matrix_du[1][1] = 1;
+          }
+        else  // lambda matrix is a swapped eps matrix
+          {
+            p_matrix_du[0][1] = 1;
+            p_matrix_du[1][0] = 1;
+          }
       }
 
-    // Assert no nonzero values
-    for (int i=0; i<dim; ++ i)
-      for (int j=0; j<dim; ++ j)
-        if (!numbers::is_finite(p_matrix_du[i][j]))
-          p_matrix_du[i][j] = 0;
-
+    // // Assert no nonzero values
+    // for (int i=0; i<dim; ++ i)
+    //   for (int j=0; j<dim; ++ j)
+    //     if (!numbers::is_finite(p_matrix_du[i][j]))
+    //       p_matrix_du[i][j] = 0;
   }  // EOM
 
 
@@ -201,6 +227,18 @@ namespace constitutive_model {
     lambda_du(dim)
   {}
 
+  void print_tensor(const Tensor<2,2> &t)
+  {
+    for (int i=0; i<2; ++i)
+      {
+        for (int j=0; j<2; ++j)
+          // if (strain_tensor[i][j]!=0)
+          std::cout << t[i][j] << "\t";
+        std::cout << std::endl;
+      }
+    std::cout << std::endl;
+  }
+
   template <int dim>
   void EnergySpectralDecomposition<dim>::
   get_stress_decomposition(const Tensor<2,dim> &strain_tensor,
@@ -209,7 +247,6 @@ namespace constitutive_model {
                            Tensor<2,dim>       &stress_tensor_plus,
                            Tensor<2,dim>       &stress_tensor_minus)
   {
-    // First get strain tensor decomposition
     compute_eigenvalues(strain_tensor, lambda);
     assemble_eigenvalue_matrix(lambda, lambda_matrix);
     assemble_eigenvector_matrix(strain_tensor, lambda, p_matrix);
@@ -227,6 +264,16 @@ namespace constitutive_model {
         stress_tensor_minus[i][i] += lame_constant*(trace_eps - trace_eps_pos);
       }
 
+    // std::cout << "strain tensor =" << std::endl;
+    // print_tensor(strain_tensor);
+    // std::cout << "lambdas =" << std::endl;
+    // std::cout << lambda[0] << "\t" << lambda[1] << std::endl;
+    // std::cout << "Lambda matrix =" << std::endl;
+    // print_tensor(lambda_matrix);
+    // std::cout << "p_matrix =" << std::endl;
+    // print_tensor(p_matrix);
+    // std::cout << "stress tensor plus =" << std::endl;
+    // print_tensor(stress_tensor_plus);
   }  // EOM
 
 
@@ -256,6 +303,24 @@ namespace constitutive_model {
       p_matrix_du*lambda_matrix*transpose(p_matrix) +
       p_matrix*lambda_matrix_du*transpose(p_matrix) +
       p_matrix*lambda_matrix*transpose(p_matrix_du);
+
+    std::cout << std::endl;
+    std::cout << "strain tensor =" << std::endl;
+    print_tensor(eps);
+
+    std::cout << "strain tensor_u =" << std::endl;
+    print_tensor(eps_u);
+
+
+    // std::cout << "lambda du =" << std::endl;
+    // std::cout << lambda_du[0] << "\t" << lambda_du[1] << std::endl << std::endl;
+
+    std::cout << "strain tensor +" << std::endl;
+    print_tensor(eps_plus);
+
+    std::cout << "strain tensor u plus =" << std::endl;
+    print_tensor(eps_u_plus);
+
     double trace_eps_u_plus = trace_eps_plus>0 ? trace(eps_u_plus) : 0;
     double trace_eps_u = trace(eps_u);
 

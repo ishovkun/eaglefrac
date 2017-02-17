@@ -102,7 +102,7 @@ namespace pds_solid
             }
     }
 
-    int initial_refinement_level = 4;
+    int initial_refinement_level = 3;
     triangulation.refine_global(initial_refinement_level);
   }
 

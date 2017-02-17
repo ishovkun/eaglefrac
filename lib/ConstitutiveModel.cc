@@ -59,86 +59,106 @@ namespace constitutive_model {
 
 
   template <int dim> inline
-  void assemble_eigenvalue_matrix(const Tensor<2,dim> &strain_tensor,
-                                  Tensor<2,dim>       &lambda_matrix)
+  void compute_eigenvalues(const Tensor<2,dim> &strain_tensor,
+                           std::vector<double> &lambda)
   {
     double trace_eps = trace(strain_tensor);
     double det_eps = determinant(strain_tensor);
-    double lambda_1 = trace_eps/2 + std::sqrt(trace_eps*trace_eps/4 - det_eps);
-    double lambda_2 = trace_eps/2 - std::sqrt(trace_eps*trace_eps/4 - det_eps);
-    lambda_matrix[0][0] = std::max(lambda_1, 0.0);
-    lambda_matrix[1][1] = std::max(lambda_2, 0.0);
-    lambda_matrix[0][1] = 0;
-    lambda_matrix[1][0] = 0;
+    double tmp = std::sqrt(trace_eps*trace_eps/4 - det_eps);
+    lambda[0] = trace_eps/2 + tmp;
+    lambda[1] = trace_eps/2 - tmp;
+  }  // eom
+
+
+  template <int dim> inline
+  void assemble_eigenvalue_matrix(const std::vector<double> &lambda,
+                                  Tensor<2,dim>             &lambda_matrix)
+  {
+    lambda_matrix = 0;
+    for (int i=0; i<dim; ++i)
+      lambda_matrix[i][i] = std::max(lambda[i], 0.0);
   }  // EOM
 
 
   template <int dim> inline
-  void assemble_eigenvalue_matrix_derivative(const Tensor<2,dim> &eps,
-                                             const Tensor<2,dim> &eps_u,
-                                             Tensor<2,dim>       &lambda_matrix_du)
+  void assemble_eigenvector_matrix(const Tensor<2,dim>       &eps,
+                                   const std::vector<double> &lambda,
+                                   Tensor<2,dim>             &p_matrix)
+  {
+    double tmp, tmp1;
+    tmp = (lambda[0] - eps[0][0])/eps[0][1];
+    tmp1 = 1./std::sqrt(1. + tmp*tmp);
+    p_matrix[0][0] = tmp1;
+    p_matrix[1][0] = tmp/tmp1;
+
+    tmp = (lambda[1] - eps[0][0])/eps[0][1];
+    tmp1 = 1./std::sqrt(1. + tmp*tmp);
+    p_matrix[0][1] = tmp1;
+    p_matrix[1][1] = tmp/tmp1;
+
+    // Assert that no nans
+    for (int i=0; i<dim; ++ i)
+      for (int j=0; j<dim; ++ j)
+        if (!numbers::is_finite(p_matrix[i][j]))
+          p_matrix[i][j] = 0;
+  }
+
+
+  template <int dim> inline
+  void compute_eigenvalue_derivative(const Tensor<2,dim> &eps,
+                                     const Tensor<2,dim> &eps_u,
+                                     std::vector<double> &lambda_du)
   {
     const double trace_eps = trace(eps);
     const double det_eps = determinant(eps);
     const double trace_eps_u = trace(eps_u);
-
-    // compute lambda_1_du and lambda_2_du
     double tmp = 0.5/std::sqrt(trace_eps*trace_eps/4 - det_eps) *
       (eps_u[0][1]*eps[1][0] + eps[0][1]*eps_u[1][0] +
        0.5*(eps[0][0] - eps[1][1])*(eps[0][0] - eps_u[1][1]));
+    lambda_du[0] = trace_eps_u/2 + tmp;
+    lambda_du[1] = trace_eps_u/2 - tmp;
+  }  // eof
 
-    double lambda_1_du = trace_eps_u/2 + tmp;
-    double lambda_2_du = trace_eps_u/2 - tmp;
 
-    // check for nans
-    if (!numbers::is_finite(lambda_1_du)) lambda_1_du = 0;
-    if (!numbers::is_finite(lambda_2_du)) lambda_2_du = 0;
-
-    lambda_matrix_du[0][0] = lambda_1_du;
-    lambda_matrix_du[1][1] = lambda_2_du;
-    lambda_matrix_du[0][1] = 0;
-    lambda_matrix_du[1][0] = 0;
-
+  template <int dim> inline void
+  assemble_eigenvalue_derivative_matrix(const std::vector<double> &lambda,
+                                        const std::vector<double> &lambda_du,
+                                        Tensor<2,dim>             &lambda_matrix_du)
+  {
+    lambda_matrix_du = 0;
+    for (int i=0; i<dim; ++i)
+      lambda_matrix_du[i][i] = (
+                                (lambda[i] > 0) &&
+                                !numbers::is_finite(lambda_du[i])
+                                ?
+                                lambda_du[i] : 0
+                                );
 
   }  // EOM
 
 
   template <int dim> inline
-  void assemble_eigenvector_matrix_derivative(const Tensor<2,dim> &eps,
-                                              const Tensor<2,dim> &eps_u,
-                                              const Tensor<2,dim> &lambda_matrix,
-                                              const Tensor<2,dim> &lambda_matrix_du,
-                                              Tensor<2,dim>       &p_matrix_du)
+  void
+  assemble_eigenvector_matrix_derivative(const Tensor<2,dim>       &eps,
+                                         const Tensor<2,dim>       &eps_u,
+                                         const std::vector<double> &lambda,
+                                         const std::vector<double> &lambda_du,
+                                         Tensor<2,dim>             &p_matrix_du)
   {
-    const double eps_12 = eps[0][1];
-    const double lambda_1 = lambda_matrix[0][0],
-                 lambda_2 = lambda_matrix[1][1];
-    const double lambda_1_du = lambda_matrix_du[0][0],
-                 lambda_2_du = lambda_matrix_du[1][1];
-
-    double
-      tmp10, tmp11, tmp12,
-      tmp20, tmp21, tmp22;
-
-    // For the first eigenvector
-    tmp10 = (lambda_1 - eps[0][0])/eps_12;
-    tmp12 =
-      ((lambda_1_du - eps_u[0][0])*eps_12 -
-       (lambda_1 - eps[0][0])*eps_12)/(eps_12*eps_12);
-    tmp11 = -1/(1+tmp10*tmp10) * 1/(2*sqrt(tmp10*tmp10)) * 2*tmp10 * tmp12;
-
-        // For the second eigenvector
-    tmp20 = (lambda_2 - eps[0][0])/eps[0][1];
-    tmp22 =
-      ((lambda_2_du - eps_u[0][0])*eps_12 -
-       (lambda_2 - eps[0][0])*eps_12)/(eps_12*eps_12);
-    tmp21 = -1/(1+tmp20*tmp20) * 1/(2*sqrt(tmp20*tmp20)) * 2*tmp20 * tmp22;
-
     // Compute entries
-    p_matrix_du[0][0] = tmp11;
-    p_matrix_du[1][0] = tmp10*tmp11 + tmp12/std::sqrt(1 + tmp10*tmp10);
-    p_matrix_du[0][1] = tmp21;
-    p_matrix_du[1][1] = tmp20*tmp21 + tmp22/std::sqrt(1 + tmp20*tmp20);
+    for (int i=0; i<dim; ++i)
+      {
+        double tmp0 = (lambda[i] - eps[0][0])/eps[0][1];
+        double tmp2 =
+          ((lambda_du[i] - eps_u[0][0])*eps[0][1] -
+           (lambda[i]    - eps[0][0])  *eps_u[0][1])
+          /(eps[0][1]*eps[0][1]);
+        double tmp1 = -1./(1.+tmp0*tmp0) / (2.*sqrt(tmp0*tmp0))
+          * 2.*tmp0 * tmp2;
+
+        p_matrix_du[0][i] = tmp1;
+        p_matrix_du[1][i] = tmp0*tmp1 + tmp2/std::sqrt(1 + tmp0*tmp0);
+      }
 
     // Assert no nonzero values
     for (int i=0; i<dim; ++ i)
@@ -149,121 +169,108 @@ namespace constitutive_model {
   }  // EOM
 
 
-  template <int dim> inline
-  void assemble_eigenvector_matrix(const Tensor<2,dim> &strain_tensor,
-                                   const Tensor<2,dim> &lambda_matrix,
-                                   Tensor<2,dim>       &p_matrix)
-  {
-    double lambda_1 = lambda_matrix[0][0],
-           lambda_2 = lambda_matrix[1][1];
-    double eps_11 = strain_tensor[0][0],
-           eps_12 = strain_tensor[0][1];
-    double tmp;
-
-    tmp = (lambda_1 - eps_11)/eps_12;
-    p_matrix[0][0] = 1./std::sqrt(1. + tmp*tmp);
-    p_matrix[1][0] = tmp/std::sqrt(1. + tmp*tmp);
-
-    tmp = (lambda_2 - eps_11)/eps_12;
-    p_matrix[0][1] = 1./std::sqrt(1 + tmp*tmp);
-    p_matrix[1][1] = tmp/std::sqrt(1 + tmp*tmp);
-
-    // Assert that no nans
-    for (int i=0; i<dim; ++ i)
-      for (int j=0; j<dim; ++ j)
-          if (!numbers::is_finite(p_matrix[i][j]))
-            p_matrix[i][j] = 0;
-  }
-
-
   template <int dim>
   class EnergySpectralDecomposition
   {
   public:
+    EnergySpectralDecomposition();
     void get_stress_decomposition(const Tensor<2,dim> &strain_tensor,
-                                  const double        mu,
-                                  const double        lambda,
+                                  const double        lame_constant,
+                                  const double        shear_modulus,
                                   Tensor<2,dim>       &stress_tensor_plus,
                                   Tensor<2,dim>       &stress_tensor_minus);
 
     void get_stress_decomposition_derivatives(const Tensor<2,dim> &strain_tensor,
                                               const Tensor<2,dim> &eps_u,
-                                              const double        mu,
-                                              const double        lambda,
-                                              const bool          rhs_sign,
+                                              const double        lame_constant,
+                                              const double        shear_modulus,
                                               Tensor<2,dim>       &sigma_u_plus_i,
                                               Tensor<2,dim>       &sigma_u_minus_i);
 
     Tensor<2,dim> p_matrix, p_matrix_du;
+    std::vector<double> lambda, lambda_du;
     Tensor<2,dim> lambda_matrix, lambda_matrix_du;
-    Tensor<2,dim> strain_tensor_plus, eps_u_plus_i;
+    Tensor<2,dim> eps_plus, eps_u_plus;
   };
 
 
   template <int dim>
+  EnergySpectralDecomposition<dim>::EnergySpectralDecomposition()
+    :
+    lambda(dim),
+    lambda_du(dim)
+  {}
+
+  template <int dim>
   void EnergySpectralDecomposition<dim>::
   get_stress_decomposition(const Tensor<2,dim> &strain_tensor,
-                           const double        mu,
-                           const double        lambda,
+                           const double        lame_constant,
+                           const double        shear_modulus,
                            Tensor<2,dim>       &stress_tensor_plus,
                            Tensor<2,dim>       &stress_tensor_minus)
   {
     // First get strain tensor decomposition
-    assemble_eigenvalue_matrix(strain_tensor, lambda_matrix);
-    assemble_eigenvector_matrix(strain_tensor, lambda_matrix,
-                                p_matrix);
-    strain_tensor_plus = p_matrix*lambda_matrix*transpose(p_matrix);;
+    compute_eigenvalues(strain_tensor, lambda);
+    assemble_eigenvalue_matrix(lambda, lambda_matrix);
+    assemble_eigenvector_matrix(strain_tensor, lambda, p_matrix);
+    eps_plus = p_matrix*lambda_matrix*transpose(p_matrix);
+
     // Finally, get stress tensor decomposition
     double trace_eps = trace(strain_tensor);
     double trace_eps_pos = std::max(trace_eps, 0.0);
-    stress_tensor_plus = 2*mu*strain_tensor_plus;
-    stress_tensor_plus[0][0] += lambda*trace_eps_pos;
-    stress_tensor_plus[1][1] += lambda*trace_eps_pos;
 
-    stress_tensor_minus = 2*mu*(strain_tensor - strain_tensor_plus);
-    stress_tensor_minus[0][0] += lambda*(trace_eps - trace_eps_pos);
-    stress_tensor_minus[1][1] += lambda*(trace_eps - trace_eps_pos);
+    stress_tensor_plus = 2*shear_modulus*eps_plus;
+    stress_tensor_minus = 2*shear_modulus*(strain_tensor - eps_plus);
+    for (int i=0; i<dim; ++i)
+      {
+        stress_tensor_plus[i][i] += lame_constant*trace_eps_pos;
+        stress_tensor_minus[i][i] += lame_constant*(trace_eps - trace_eps_pos);
+      }
 
   }  // EOM
 
 
   template <int dim>
   void EnergySpectralDecomposition<dim>::
-  get_stress_decomposition_derivatives(const Tensor<2,dim> &strain_tensor,
+  get_stress_decomposition_derivatives(const Tensor<2,dim> &eps,
                                        const Tensor<2,dim> &eps_u,
-                                       const double        mu,
-                                       const double        lambda,
-                                       const bool          rhs_sign,
+                                       const double        lame_constant,
+                                       const double        shear_modulus,
                                        Tensor<2,dim>       &sigma_u_plus,
                                        Tensor<2,dim>       &sigma_u_minus)
   {
-    // already found because extracted from solution
-    assemble_eigenvalue_matrix(strain_tensor, lambda_matrix);
-    assemble_eigenvector_matrix(strain_tensor, lambda_matrix, p_matrix);
+    // already found for the current q-point
+    // compute_eigenvalues(eps, lambda);
+    // assemble_eigenvalue_matrix(lambda, lambda_matrix);
 
-    assemble_eigenvalue_matrix_derivative(strain_tensor, eps_u,
-                                          lambda_matrix_du);
-    assemble_eigenvector_matrix_derivative(strain_tensor, eps_u,
-                                           lambda_matrix, lambda_matrix_du,
+    compute_eigenvalue_derivative(eps, eps_u, lambda_du);
+    assemble_eigenvalue_derivative_matrix(lambda, lambda_du, lambda_matrix_du);
+    assemble_eigenvector_matrix_derivative(eps, eps_u, lambda, lambda_du,
                                            p_matrix_du);
 
-    if (rhs_sign)
-      eps_u_plus_i =
-        p_matrix_du*lambda_matrix*transpose(p_matrix) +
-        p_matrix*lambda_matrix_du*transpose(p_matrix) +
-        p_matrix*lambda_matrix*transpose(p_matrix_du);
-    else eps_u_plus_i = 0;
+    // already computed in the q-point
+    // eps_plus = p_matrix*lambda_matrix*transpose(p_matrix);
+    double trace_eps_plus = trace(eps_plus);
 
+    eps_u_plus =
+      p_matrix_du*lambda_matrix*transpose(p_matrix) +
+      p_matrix*lambda_matrix_du*transpose(p_matrix) +
+      p_matrix*lambda_matrix*transpose(p_matrix_du);
+    double trace_eps_u_plus = trace_eps_plus>0 ? trace(eps_u_plus) : 0;
     double trace_eps_u = trace(eps_u);
-    double trace_eps_u_plus = trace(eps_u_plus_i);
 
-    sigma_u_plus = 2*mu*eps_u_plus_i;
-    sigma_u_minus = 2*mu*(eps_u - eps_u_plus_i);
-    // Add diagonal terms
+    sigma_u_plus = 0;
+    sigma_u_minus = 0;
     for (int i=0; i<dim; ++i)
       {
-        sigma_u_plus[i][i] += lambda*trace_eps_u_plus;
-        sigma_u_minus[i][i] += lambda*(trace_eps_u - trace_eps_u_plus);
+        for (int j=0; j<dim; ++j)
+          {
+            eps_u_plus[i][j] = (eps_u[i][j]>0 ? eps_u_plus[i][j] : 0);
+            sigma_u_plus[i][j] += 2*shear_modulus*eps_u_plus[i][j];
+            sigma_u_minus[i][j] += 2*shear_modulus*(eps_u[i][j] - eps_u_plus[i][j]);
+          }
+        sigma_u_plus[i][i] += lame_constant*trace_eps_u_plus;
+        sigma_u_minus[i][i] += lame_constant*(trace_eps_u - trace_eps_u_plus);
       }
   }  // EOM
 

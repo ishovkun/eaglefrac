@@ -129,7 +129,7 @@ namespace pds_solid
     phase_field_solver.old_solution.block(1) = 1;
 
     int time_step_number = 0;
-    double time = 0, t_max = 3, time_step = 1;
+    double time = 1, t_max = 3, time_step = 1;
     while(time < t_max)
       {
         pcout << "Time: " << time << std::endl;

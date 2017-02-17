@@ -391,10 +391,12 @@ namespace phase_field
 
           for (unsigned int q=0; q<n_q_points; ++q)
             {
+              // convert from non-symmetric tensor
               convert_to_tensor(strain_tensor_values[q], strain_tensor_value);
+
               stress_decomposition.get_stress_decomposition(strain_tensor_value,
-                                                            data.shear_modulus,
                                                             data.lame_constant,
+                                                            data.shear_modulus,
                                                             stress_tensor_plus,
                                                             stress_tensor_minus);
               // TODO: include time into here
@@ -408,38 +410,40 @@ namespace phase_field
                   eps_u[k] = fe_values[displacement].symmetric_gradient(k, q);
                   xi_phi[k] = fe_values[phase_field].value(k ,q);
                   grad_xi_phi[k] = fe_values[phase_field].gradient(k, q);
+
+                  // Find sigma_plus_du, and sigma_minus_du
+                  stress_decomposition.get_stress_decomposition_derivatives
+                    (strain_tensor_value,
+                     eps_u[k],
+                     data.lame_constant,
+                     data.shear_modulus,
+                     sigma_u_plus[k],
+                     sigma_u_minus[k]);
+
                 }  // end k loop
 
+              // Assemble local rhs +
               for (unsigned int i=0; i<dofs_per_cell; ++i)
                 {
                   double rhs_u =
-                    ((1 - kappa)*phi_e*phi_e + kappa)
-                    * scalar_product(stress_tensor_plus, eps_u[i])
+                    ((1 - kappa)*phi_e*phi_e + kappa)*
+                      scalar_product(stress_tensor_plus, eps_u[i])
                     +
                     scalar_product(stress_tensor_minus, eps_u[i]);
 
                   double rhs_phi =
                     (1 - kappa)*phi_value*xi_phi[i]
-                    * scalar_product(stress_tensor_plus, strain_tensor_value)
+                      *scalar_product(stress_tensor_plus, strain_tensor_value)
                     +
-                    gamma_c*(
-                     -(1. - phi_value)*xi_phi[i]/e
-                     + e*scalar_product(grad_phi_values[q], grad_xi_phi[i])
-                    );
+                    gamma_c/e
+                      *(-(1. - phi_value)*xi_phi[i])
+                     +
+                    gamma_c*e
+                      *scalar_product(grad_phi_values[q], grad_xi_phi[i])
+                    ;
 
                   local_rhs[i] -= (rhs_u + rhs_phi)*jxw;
 
-                  // Find sigma_plus_du, and sigma_minus_du
-
-                  bool rhs_sign = std::signbit(-local_rhs[i]);
-                  stress_decomposition.get_stress_decomposition_derivatives
-                    (strain_tensor_value,
-                     eps_u[i],
-                     data.shear_modulus,
-                     data.lame_constant,
-                     rhs_sign,
-                     sigma_u_plus[i],
-                     sigma_u_minus[i]);
                 }  // end i loop
 
               // Assemble local matrix
@@ -448,27 +452,31 @@ namespace phase_field
                   {
                     double m_u_u =
                       ((1-kappa)*phi_e*phi_e + kappa)
-                      *scalar_product(sigma_u_plus[j], eps_u[i])
+                        *scalar_product(sigma_u_plus[j], eps_u[i])
                       +
                       scalar_product(sigma_u_minus[j], eps_u[i]);
 
                     double m_phi_u =
-                      2*(1-kappa)*phi_value*xi_phi[i]
-                      *scalar_product(sigma_u_plus[j], strain_tensor_value);
+                      2*(1-kappa)*phi_value
+                        *scalar_product(sigma_u_plus[j], strain_tensor_value)
+                        *xi_phi[i];
 
                     // double m_u_phi = 0;
 
                     double m_phi_phi =
                       (1-kappa)*xi_phi[j]*xi_phi[i]
-                      *scalar_product(stress_tensor_plus, strain_tensor_value)
+                        *scalar_product(stress_tensor_plus, strain_tensor_value)
                       +
-                      gamma_c*(xi_phi[j]*xi_phi[i]/e +
-                               e*scalar_product(grad_xi_phi[j], grad_xi_phi[i])
-                               );
+                      gamma_c*(xi_phi[j]*xi_phi[i]/e)
+                      +
+                      gamma_c*e*scalar_product(grad_xi_phi[j], grad_xi_phi[i])
+                      ;
 
                     local_matrix(i, j) += (m_u_u + m_phi_u + m_phi_phi) * jxw;
 
-                    prec_local_matrix(i, j) += (xi_phi[i]*xi_phi[j]*jxw);
+                    prec_local_matrix(i, j) +=
+                      // 1./e/gamma_c*
+                      (xi_phi[j]*xi_phi[i])*jxw;
 
                   }  // end j loop
             }  // end q loop
@@ -684,14 +692,13 @@ namespace phase_field
       preconditioner(prec_A, mp_inverse);
 
     // set up the linear solver and solve the system
-    SolverControl solver_control(system_matrix.m(),
-                                  1e-10*rhs_vector.l2_norm());
+    SolverControl solver_control(system_matrix.m(), 1e-10);
 
     // SolverFGMRES<TrilinosWrappers::MPI::BlockVector>
     SolverGMRES<TrilinosWrappers::MPI::BlockVector>
       solver(solver_control);
 
-    all_constraints.set_zero(solution_update);
+    // all_constraints.set_zero(solution_update);
     solver.solve(system_matrix, solution_update, rhs_vector,
                  preconditioner);
 

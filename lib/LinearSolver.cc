@@ -14,9 +14,11 @@ namespace LinearSolvers
   public:
     InverseMatrix(const Matrix         &m,
                   const Preconditioner &preconditioner);
+
     template <typename VectorType>
     void vmult(VectorType       &dst,
                const VectorType &src) const;
+
   private:
     const SmartPointer<const Matrix> matrix;
     const Preconditioner &preconditioner;

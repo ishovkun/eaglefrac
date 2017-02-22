@@ -27,7 +27,7 @@ namespace constitutive_model {
 
   template <int dim>
   inline SymmetricTensor<2,dim>
-  get_strain_tensor (const std::vector<Tensor<1,dim> > &grad)
+  get_strain_tensor(const std::vector<Tensor<1,dim> > &grad)
     /*
       Compute local strain tensor from solution gradients
      */
@@ -44,9 +44,9 @@ namespace constitutive_model {
 
 
   template <int dim> inline
-  SymmetricTensor<4, dim> isotropic_gassman_tensor(double lambda, double mu)
+  Tensor<4,dim> isotropic_gassman_tensor(double lambda, double mu)
   {
-	  SymmetricTensor<4, dim> tmp;
+	  Tensor<4, dim> tmp;
 	  for (unsigned int i=0; i<dim; ++i)
 		  for (unsigned int j=0; j<dim; ++j)
 			  for (unsigned int k=0; k<dim; ++k)
@@ -175,16 +175,16 @@ namespace constitutive_model {
         }
     else  // Tensor already diagonal
       {
-        if(eps[0][0] >= eps[1][1])  // eigenvalues in the right order
-          {
-            p_matrix_du[0][0] = 1;
-            p_matrix_du[1][1] = 1;
-          }
-        else  // lambda matrix is a swapped eps matrix
-          {
-            p_matrix_du[0][1] = 1;
-            p_matrix_du[1][0] = 1;
-          }
+        // if(eps[0][0] >= eps[1][1])  // eigenvalues in the right order
+        //   {
+        //     p_matrix_du[0][0] = 1;
+        //     p_matrix_du[1][1] = 1;
+        //   }
+        // else  // lambda matrix is a swapped eps matrix
+        //   {
+        //     p_matrix_du[0][1] = 1;
+        //     p_matrix_du[1][0] = 1;
+        //   }
       }
 
     // // Assert no nonzero values
@@ -304,22 +304,22 @@ namespace constitutive_model {
       p_matrix*lambda_matrix_du*transpose(p_matrix) +
       p_matrix*lambda_matrix*transpose(p_matrix_du);
 
-    std::cout << std::endl;
-    std::cout << "strain tensor =" << std::endl;
-    print_tensor(eps);
+    // std::cout << std::endl;
+    // std::cout << "strain tensor =" << std::endl;
+    // print_tensor(eps);
 
-    std::cout << "strain tensor_u =" << std::endl;
-    print_tensor(eps_u);
+    // std::cout << "strain tensor_u =" << std::endl;
+    // print_tensor(eps_u);
 
 
     // std::cout << "lambda du =" << std::endl;
     // std::cout << lambda_du[0] << "\t" << lambda_du[1] << std::endl << std::endl;
 
-    std::cout << "strain tensor +" << std::endl;
-    print_tensor(eps_plus);
+    // std::cout << "strain tensor +" << std::endl;
+    // print_tensor(eps_plus);
 
-    std::cout << "strain tensor u plus =" << std::endl;
-    print_tensor(eps_u_plus);
+    // std::cout << "strain tensor u plus =" << std::endl;
+    // print_tensor(eps_u_plus);
 
     double trace_eps_u_plus = trace_eps_plus>0 ? trace(eps_u_plus) : 0;
     double trace_eps_u = trace(eps_u);
@@ -330,13 +330,19 @@ namespace constitutive_model {
       {
         for (int j=0; j<dim; ++j)
           {
-            eps_u_plus[i][j] = (eps_u[i][j]>0 ? eps_u_plus[i][j] : 0);
+            // eps_u_plus[i][j] = (eps_plus[i][j]>0 ? eps_u_plus[i][j] : 0);
             sigma_u_plus[i][j] += 2*shear_modulus*eps_u_plus[i][j];
             sigma_u_minus[i][j] += 2*shear_modulus*(eps_u[i][j] - eps_u_plus[i][j]);
           }
         sigma_u_plus[i][i] += lame_constant*trace_eps_u_plus;
         sigma_u_minus[i][i] += lame_constant*(trace_eps_u - trace_eps_u_plus);
       }
+
+    // std::cout << "strain tensor +" << std::endl;
+    // print_tensor(eps_plus);
+    //
+    // std::cout << "stress tensor u plus =" << std::endl;
+    // print_tensor(sigma_u_plus);
   }  // EOM
 
 }  // end of namespace

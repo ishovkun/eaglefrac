@@ -2,6 +2,7 @@
 #include <deal.II/base/quadrature_lib.h>
 #include <deal.II/base/timer.h>
 #include <deal.II/base/function.h>
+#include <deal.II/base/tensor.h>
 
 #include <deal.II/lac/generic_linear_algebra.h>
 #include <deal.II/lac/solver_gmres.h>
@@ -24,6 +25,7 @@
 #include <deal.II/fe/fe_values.h>
 #include <deal.II/numerics/vector_tools.h>
 #include <deal.II/fe/fe_system.h>
+#include <deal.II/lac/sparsity_tools.h>
 
 #include <cmath>        // std:: math functions
 
@@ -93,7 +95,6 @@ namespace phase_field
     TrilinosWrappers::MPI::BlockVector solution, solution_update, residual;
     TrilinosWrappers::MPI::BlockVector old_solution, old_old_solution;
   };
-
 
 
   template <int dim>
@@ -215,9 +216,6 @@ namespace phase_field
       system_matrix.clear();
       reduced_system_matrix.clear();
 
-      TrilinosWrappers::BlockSparsityPattern sp(partitioning, partitioning,
-                                                relevant_partitioning,
-                                                mpi_communicator);
       /*
       Displacements are coupled with one another (upper-left block = true),
       displacements are coupled with phase-field (lower-left block = true),
@@ -227,22 +225,39 @@ namespace phase_field
       Table<2,DoFTools::Coupling> coupling(dim+1, dim+1);
       for (unsigned int c=0; c<dim+1; ++c)
         for (unsigned int d=0; d<dim+1; ++d)
-          if ((c<dim && d<dim) ||
-              ((c==dim) && (d==dim)) ||
-              ((c<dim) && d==dim))
+          if ( (c<=dim && d<dim) || (c==dim && d==dim) )
             coupling[c][d] = DoFTools::always;
           else
             coupling[c][d] = DoFTools::none;
 
+      // TrilinosWrappers::BlockSparsityPattern sp(partitioning, partitioning,
+      //                                           relevant_partitioning,
+      //                                           mpi_communicator);
+      // DoFTools::make_sparsity_pattern(dof_handler, coupling, sp,
+      //                                 physical_constraints,
+      //                                 /* 	keep_constrained_dofs = */ false,
+      //                                 Utilities::MPI::
+      //                                 this_mpi_process(mpi_communicator));
+      // sp.compress();
+
+      // system_matrix.reinit(sp);
+      // reduced_system_matrix.reinit(sp);
+
+      BlockDynamicSparsityPattern sp(dofs_per_block, dofs_per_block);
       DoFTools::make_sparsity_pattern(dof_handler, coupling, sp,
                                       physical_constraints,
-                                      /* 	keep_constrained_dofs = */ false,
-                                      Utilities::MPI::
-                                      this_mpi_process(mpi_communicator));
-      sp.compress();
+                                      /* 	keep_constrained_dofs = */ false);
+      SparsityTools::
+        distribute_sparsity_pattern(sp,
+                                    dof_handler.locally_owned_dofs_per_processor(),
+                                    mpi_communicator,
+                                    locally_relevant_dofs);
+      system_matrix.reinit(partitioning, sp, mpi_communicator);
+      reduced_system_matrix.reinit(partitioning, sp, mpi_communicator);
 
-      system_matrix.reinit(sp);
-      reduced_system_matrix.reinit(sp);
+      IndexSet::ElementIterator
+        index = locally_owned_dofs.begin(),
+        end_index = locally_owned_dofs.end();
 
       // Finally assemble the diagonal of the mass matrix
       TrilinosWrappers::BlockSparseMatrix mass_matrix;
@@ -251,10 +266,6 @@ namespace phase_field
       mass_matrix_diagonal.reinit(partitioning, relevant_partitioning,
                                   mpi_communicator, /* omit-zeros=*/ true);
 
-      IndexSet::ElementIterator
-        index = locally_owned_dofs.begin(),
-        end_index = locally_owned_dofs.end();
-
       for (; index!=end_index; ++index)
         mass_matrix_diagonal(*index) = mass_matrix.diag_element(*index);
 
@@ -262,38 +273,37 @@ namespace phase_field
     }
 
     { // Preconditioner matrix
-      preconditioner_matrix.clear();
-
-      TrilinosWrappers::BlockSparsityPattern sp(partitioning, partitioning,
-                                                relevant_partitioning,
-                                                mpi_communicator);
-
-      // only phi-phi entries
-      Table<2,DoFTools::Coupling> coupling(dim+1, dim+1);
-      for (unsigned int c=0; c<dim+1; ++c)
-        for (unsigned int d=0; d<dim+1; ++d)
-          if (c==dim && d==dim)
-            coupling[c][d] = DoFTools::always;
-          else
-            coupling[c][d] = DoFTools::always;
-
-      DoFTools::make_sparsity_pattern(dof_handler, coupling, sp,
-                                      physical_constraints,
-                                      /* 	keep_constrained_dofs = */ false,
-                                      Utilities::MPI::
-                                      this_mpi_process(mpi_communicator));
-
-      sp.compress();
-      preconditioner_matrix.reinit(sp);
+      // preconditioner_matrix.clear();
+      //
+      // TrilinosWrappers::BlockSparsityPattern sp(partitioning, partitioning,
+      //                                           relevant_partitioning,
+      //                                           mpi_communicator);
+      //
+      // // only phi-phi entries
+      // Table<2,DoFTools::Coupling> coupling(dim+1, dim+1);
+      // for (unsigned int c=0; c<dim+1; ++c)
+      //   for (unsigned int d=0; d<dim+1; ++d)
+      //     if (c==dim && d==dim)
+      //       coupling[c][d] = DoFTools::always;
+      //     else
+      //       coupling[c][d] = DoFTools::none;
+      //
+      // DoFTools::make_sparsity_pattern(dof_handler, coupling, sp,
+      //                                 physical_constraints,
+      //                                 /* 	keep_constrained_dofs = */ false,
+      //                                 Utilities::MPI::
+      //                                 this_mpi_process(mpi_communicator));
+      //
+      // sp.compress();
+      // preconditioner_matrix.reinit(sp);
     }
 
     { // Setup vectors
-      solution.reinit(partitioning, relevant_partitioning, mpi_communicator);
+      solution.reinit(partitioning, mpi_communicator);
       old_solution.reinit(solution);
       old_old_solution.reinit(solution);
-      solution_update.reinit(solution);
-      rhs_vector.reinit(partitioning, relevant_partitioning,
-                        mpi_communicator, /* omit-zeros=*/ true);
+      solution_update.reinit(partitioning, relevant_partitioning, mpi_communicator);
+      rhs_vector.reinit(partitioning, mpi_communicator, /* omit-zeros=*/ true);
       reduced_rhs_vector.reinit(partitioning, relevant_partitioning,
                                 mpi_communicator, /* omit-zeros=*/ true);
       residual.reinit(rhs_vector);
@@ -364,6 +374,10 @@ namespace phase_field
 
     double gamma_c = data.energy_release_rate;
 
+    Tensor<4,dim> gassman_tensor =
+     constitutive_model::isotropic_gassman_tensor<dim>(data.lame_constant,
+                                                       data.shear_modulus);
+
     typename DoFHandler<dim>::active_cell_iterator
       cell = dof_handler.begin_active(),
       endc = dof_handler.end();
@@ -394,12 +408,16 @@ namespace phase_field
               // convert from non-symmetric tensor
               convert_to_tensor(strain_tensor_values[q], strain_tensor_value);
 
-              stress_decomposition.get_stress_decomposition(strain_tensor_value,
-                                                            data.lame_constant,
-                                                            data.shear_modulus,
-                                                            stress_tensor_plus,
-                                                            stress_tensor_minus);
-              // TODO: include time into here
+              // stress_decomposition.get_stress_decomposition(strain_tensor_value,
+              //                                               data.lame_constant,
+              //                                               data.shear_modulus,
+              //                                               stress_tensor_plus,
+              //                                               stress_tensor_minus);
+              stress_tensor_minus = 0;
+              stress_tensor_plus =
+                  double_contract<2, 0, 3, 1>(gassman_tensor, strain_tensor_value);
+
+              // TODO: include time into hereouble_contract<2, 0, 3, 1>(gassman_tensor,
               double d_phi = old_phi_values[q] - old_old_phi_values[q];
               double phi_e = old_phi_values[q] + d_phi;  // extrapolated
               double phi_value = phi_values[q];
@@ -411,14 +429,17 @@ namespace phase_field
                   xi_phi[k] = fe_values[phase_field].value(k ,q);
                   grad_xi_phi[k] = fe_values[phase_field].gradient(k, q);
 
-                  // Find sigma_plus_du, and sigma_minus_du
-                  stress_decomposition.get_stress_decomposition_derivatives
-                    (strain_tensor_value,
-                     eps_u[k],
-                     data.lame_constant,
-                     data.shear_modulus,
-                     sigma_u_plus[k],
-                     sigma_u_minus[k]);
+                  // stress_decomposition.get_stress_decomposition_derivatives
+                  //   (strain_tensor_value,
+                  //    eps_u[k],
+                  //    data.lame_constant,
+                  //    data.shear_modulus,
+                  //    sigma_u_plus[k],
+                  //    sigma_u_minus[k]);
+
+                  sigma_u_minus[k] = 0;
+                  sigma_u_plus[k] =
+                    double_contract<2, 0, 3, 1>(gassman_tensor, eps_u[k]);
 
                 }  // end k loop
 
@@ -426,18 +447,17 @@ namespace phase_field
               for (unsigned int i=0; i<dofs_per_cell; ++i)
                 {
                   double rhs_u =
-                    ((1 - kappa)*phi_e*phi_e + kappa)*
-                      scalar_product(stress_tensor_plus, eps_u[i])
+                    ((1.-kappa)*phi_e*phi_e + kappa)
+                      *scalar_product(stress_tensor_plus, eps_u[i])
                     +
                     scalar_product(stress_tensor_minus, eps_u[i]);
 
                   double rhs_phi =
-                    (1 - kappa)*phi_value*xi_phi[i]
+                    (1.-kappa)*phi_value*xi_phi[i]
                       *scalar_product(stress_tensor_plus, strain_tensor_value)
+                    -
+                    gamma_c/e*(1-phi_value)*xi_phi[i]
                     +
-                    gamma_c/e
-                      *(-(1. - phi_value)*xi_phi[i])
-                     +
                     gamma_c*e
                       *scalar_product(grad_phi_values[q], grad_xi_phi[i])
                     ;
@@ -451,35 +471,49 @@ namespace phase_field
                 for (unsigned int j=0; j<dofs_per_cell; ++j)
                   {
                     double m_u_u =
-                      ((1-kappa)*phi_e*phi_e + kappa)
+                      ((1.-kappa)*phi_e*phi_e + kappa)
                         *scalar_product(sigma_u_plus[j], eps_u[i])
                       +
                       scalar_product(sigma_u_minus[j], eps_u[i]);
 
                     double m_phi_u =
-                      2*(1-kappa)*phi_value
+                      2.*(1.-kappa)*phi_value
                         *scalar_product(sigma_u_plus[j], strain_tensor_value)
                         *xi_phi[i];
 
                     // double m_u_phi = 0;
 
                     double m_phi_phi =
-                      (1-kappa)*xi_phi[j]*xi_phi[i]
+                      (1.-kappa)*xi_phi[j]*xi_phi[i]
                         *scalar_product(stress_tensor_plus, strain_tensor_value)
                       +
-                      gamma_c*(xi_phi[j]*xi_phi[i]/e)
+                      gamma_c/e*(xi_phi[j]*xi_phi[i])
                       +
                       gamma_c*e*scalar_product(grad_xi_phi[j], grad_xi_phi[i])
                       ;
 
                     local_matrix(i, j) += (m_u_u + m_phi_u + m_phi_phi) * jxw;
 
-                    prec_local_matrix(i, j) +=
-                      // 1./e/gamma_c*
-                      (xi_phi[j]*xi_phi[i])*jxw;
+                    // prec_local_matrix(i, j) +=
+                    //   // 1./e/gamma_c*
+                    //   (xi_phi[j]*xi_phi[i])*jxw;
+                      // scalar_product(grad_xi_phi[j], grad_xi_phi[i])*jxw;
 
                   }  // end j loop
             }  // end q loop
+
+          // pcout << "\n cell matrix = " << std::endl;
+          // for (int i=0; i<dofs_per_cell; ++i)
+          //   {
+          //     for (int j=0; j<dofs_per_cell; ++j)
+          //       pcout << local_matrix(i, j) << "\t";
+          //     pcout << std::endl;
+          //   }
+          // pcout << "\n cell rhs = " << std::endl;
+          // for (int i=0; i<dofs_per_cell; ++i)
+          //   pcout << local_rhs(i) << "\t";
+          // pcout << std::endl;
+
 
           cell->get_dof_indices(local_dof_indices);
 
@@ -495,9 +529,9 @@ namespace phase_field
                                                      reduced_system_matrix,
                                                      reduced_rhs_vector);
 
-          all_constraints.distribute_local_to_global(prec_local_matrix,
-                                                     local_dof_indices,
-                                                     preconditioner_matrix);
+          // all_constraints.distribute_local_to_global(prec_local_matrix,
+          //                                            local_dof_indices,
+          //                                            preconditioner_matrix);
         }  // end of cell loop
 
     system_matrix.compress(VectorOperation::add);
@@ -649,9 +683,9 @@ namespace phase_field
       }
 
     // Apply BC values to the solution vector
-    for (std::map<types::global_dof_index, double>::const_iterator
+    for (std::map<types::global_dof_index,double>::const_iterator
            p = boundary_values.begin();
-         p != boundary_values.end(); ++p)
+           p != boundary_values.end(); ++p)
       solution(p->first) = p->second;
 
     solution.compress(VectorOperation::insert);
@@ -663,6 +697,10 @@ namespace phase_field
   void PhaseFieldSolver<dim>::
   solve()
   {
+    /*
+      In this method we essentially use 2 block diagonal preconditioners
+      for the block (0,0) and the block (1, 1)
+    */
     computing_timer.enter_section("Solve phase-field system");
 
     // Preconditioner for the displacement (0, 0) block
@@ -676,34 +714,29 @@ namespace phase_field
     TrilinosWrappers::PreconditionAMG prec_S;
     {
       TrilinosWrappers::PreconditionAMG::AdditionalData data;
-      prec_S.initialize(preconditioner_matrix.block(1, 1), data);
+      prec_S.initialize(system_matrix.block(1, 1), data);
     }
-
-    // The InverseMatrix is used to solve for the mass matrix
-    typedef LinearSolvers::
-      InverseMatrix<TrilinosWrappers::SparseMatrix,
-                    TrilinosWrappers::PreconditionAMG> mp_inverse_t;
-    const mp_inverse_t
-      mp_inverse(preconditioner_matrix.block(1, 1), prec_S);
 
     // Construct block preconditioner (for the whole matrix)
     const LinearSolvers::
-      BlockDiagonalPreconditioner<TrilinosWrappers::PreconditionAMG, mp_inverse_t>
-      preconditioner(prec_A, mp_inverse);
+      BlockDiagonalPreconditioner<TrilinosWrappers::PreconditionAMG,
+                                  TrilinosWrappers::PreconditionAMG>
+      preconditioner(prec_A, prec_S);
 
     // set up the linear solver and solve the system
-    SolverControl solver_control(system_matrix.m(), 1e-10);
+    unsigned int max_iter = 5*system_matrix.m();
+    SolverControl solver_control(max_iter, 1e-10);
 
     // SolverFGMRES<TrilinosWrappers::MPI::BlockVector>
     SolverGMRES<TrilinosWrappers::MPI::BlockVector>
       solver(solver_control);
 
     // all_constraints.set_zero(solution_update);
-    solver.solve(system_matrix, solution_update, rhs_vector,
-                 preconditioner);
+    solver.solve(system_matrix, solution_update, rhs_vector, preconditioner);
 
     pcout << "Solved in " << solver_control.last_step()
           << " iterations." << std::endl;
+
     all_constraints.distribute(solution_update);
 
     computing_timer.exit_section();

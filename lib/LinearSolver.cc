@@ -27,8 +27,8 @@ namespace LinearSolvers
 
   template <class Matrix, class Preconditioner>
   InverseMatrix<Matrix,Preconditioner>::
-  InverseMatrix (const Matrix &m,
-                 const Preconditioner &preconditioner)
+  InverseMatrix(const Matrix &m,
+                const Preconditioner &preconditioner)
     :
     matrix (&m),
     preconditioner (preconditioner)

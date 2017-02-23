@@ -78,6 +78,7 @@ namespace phase_field
 
     FESystem<dim> fe;
 
+    std::vector<IndexSet> owned_partitioning, relevant_partitioning;
     IndexSet locally_owned_dofs;
 
     TrilinosWrappers::MPI::BlockVector rhs_vector, reduced_rhs_vector;
@@ -87,6 +88,8 @@ namespace phase_field
     TrilinosWrappers::BlockSparseMatrix preconditioner_matrix;
 
     ConstraintMatrix physical_constraints, all_constraints;
+
+
     double min_cell_size;
 
   public:
@@ -155,20 +158,21 @@ namespace phase_field
           << std::endl;
 
     // Partitioning
-    std::vector<IndexSet> partitioning, relevant_partitioning;
     IndexSet locally_relevant_dofs;
-    { // compute owned dofs, partitioning, and relevant partitioning
+    { // compute owned dofs, owned partitioning, and relevant partitioning
       locally_owned_dofs = dof_handler.locally_owned_dofs();
       active_set.set_size(dof_handler.n_locally_owned_dofs());
 
-      partitioning.push_back(locally_owned_dofs.get_view(0, n_u));
-      partitioning.push_back(locally_owned_dofs.get_view(n_u, n_u+n_phi));
+      owned_partitioning.resize(2);
+      owned_partitioning[0] = locally_owned_dofs.get_view(0, n_u);
+      owned_partitioning[1] = locally_owned_dofs.get_view(n_u, n_u+n_phi);
 
       DoFTools::extract_locally_relevant_dofs(dof_handler,
                                               locally_relevant_dofs);
 
-      relevant_partitioning.push_back(locally_relevant_dofs.get_view(0, n_u));
-      relevant_partitioning.push_back(locally_relevant_dofs.get_view(n_u, n_u+n_phi));
+      relevant_partitioning.resize(2);
+      relevant_partitioning[0] = locally_relevant_dofs.get_view(0, n_u);
+      relevant_partitioning[1] = locally_relevant_dofs.get_view(n_u, n_u+n_phi);
     }
 
     { // constraints
@@ -252,8 +256,8 @@ namespace phase_field
                                     dof_handler.locally_owned_dofs_per_processor(),
                                     mpi_communicator,
                                     locally_relevant_dofs);
-      system_matrix.reinit(partitioning, sp, mpi_communicator);
-      reduced_system_matrix.reinit(partitioning, sp, mpi_communicator);
+      system_matrix.reinit(owned_partitioning, sp, mpi_communicator);
+      reduced_system_matrix.reinit(owned_partitioning, sp, mpi_communicator);
 
       IndexSet::ElementIterator
         index = locally_owned_dofs.begin(),
@@ -263,7 +267,7 @@ namespace phase_field
       TrilinosWrappers::BlockSparseMatrix mass_matrix;
       mass_matrix.reinit(sp);
       assemble_mass_matrix_diagonal(mass_matrix);
-      mass_matrix_diagonal.reinit(partitioning, relevant_partitioning,
+      mass_matrix_diagonal.reinit(owned_partitioning, relevant_partitioning,
                                   mpi_communicator, /* omit-zeros=*/ true);
 
       for (; index!=end_index; ++index)
@@ -299,12 +303,12 @@ namespace phase_field
     }
 
     { // Setup vectors
-      solution.reinit(partitioning, mpi_communicator);
+      solution.reinit(owned_partitioning, mpi_communicator);
       old_solution.reinit(solution);
       old_old_solution.reinit(solution);
-      solution_update.reinit(partitioning, relevant_partitioning, mpi_communicator);
-      rhs_vector.reinit(partitioning, mpi_communicator, /* omit-zeros=*/ true);
-      reduced_rhs_vector.reinit(partitioning, relevant_partitioning,
+      solution_update.reinit(owned_partitioning, relevant_partitioning, mpi_communicator);
+      rhs_vector.reinit(owned_partitioning, mpi_communicator, /* omit-zeros=*/ true);
+      reduced_rhs_vector.reinit(owned_partitioning, relevant_partitioning,
                                 mpi_communicator, /* omit-zeros=*/ true);
       residual.reinit(rhs_vector);
     }
@@ -337,8 +341,7 @@ namespace phase_field
     const unsigned int dofs_per_cell   = fe.dofs_per_cell;
     const unsigned int n_q_points      = quadrature_formula.size();
 
-    FullMatrix<double>   local_matrix(dofs_per_cell, dofs_per_cell),
-                         prec_local_matrix(dofs_per_cell, dofs_per_cell);
+    FullMatrix<double>   local_matrix(dofs_per_cell, dofs_per_cell);
     Vector<double>       local_rhs(dofs_per_cell);
 
     std::vector<types::global_dof_index> local_dof_indices(dofs_per_cell);
@@ -378,6 +381,11 @@ namespace phase_field
      constitutive_model::isotropic_gassman_tensor<dim>(data.lame_constant,
                                                        data.shear_modulus);
 
+    system_matrix = 0;
+    reduced_system_matrix = 0;
+    rhs_vector = 0;
+    reduced_rhs_vector = 0;
+
     typename DoFHandler<dim>::active_cell_iterator
       cell = dof_handler.begin_active(),
       endc = dof_handler.end();
@@ -387,7 +395,6 @@ namespace phase_field
         {
           local_rhs = 0;
           local_matrix = 0;
-          prec_local_matrix = 0;
 
           fe_values.reinit(cell);
 
@@ -494,11 +501,6 @@ namespace phase_field
 
                     local_matrix(i, j) += (m_u_u + m_phi_u + m_phi_phi) * jxw;
 
-                    // prec_local_matrix(i, j) +=
-                    //   // 1./e/gamma_c*
-                    //   (xi_phi[j]*xi_phi[i])*jxw;
-                      // scalar_product(grad_xi_phi[j], grad_xi_phi[i])*jxw;
-
                   }  // end j loop
             }  // end q loop
 
@@ -529,14 +531,10 @@ namespace phase_field
                                                      reduced_system_matrix,
                                                      reduced_rhs_vector);
 
-          // all_constraints.distribute_local_to_global(prec_local_matrix,
-          //                                            local_dof_indices,
-          //                                            preconditioner_matrix);
         }  // end of cell loop
 
     system_matrix.compress(VectorOperation::add);
     reduced_system_matrix.compress(VectorOperation::add);
-    preconditioner_matrix.compress(VectorOperation::add);
     rhs_vector.compress(VectorOperation::add);
     reduced_rhs_vector.compress(VectorOperation::add);
 
@@ -613,9 +611,18 @@ namespace phase_field
     all_constraints.clear();
 
     // Iterator
+    IndexSet owned_phase_field_dofs = locally_owned_dofs;
+    owned_phase_field_dofs.subtract_set(owned_partitioning[0]);
+
+    // IndexSet::ElementIterator
+    //   index = locally_owned_dofs.begin(),
+    //   end_index = locally_owned_dofs.end();
+
     IndexSet::ElementIterator
-      index = locally_owned_dofs.begin(),
-      end_index = locally_owned_dofs.end();
+      index = owned_phase_field_dofs.begin(),
+      end_index = owned_phase_field_dofs.end();
+
+    // pcout << "begin: " << *index << std::endl;
 
     for (; index!=end_index; ++index)
       {
@@ -629,6 +636,7 @@ namespace phase_field
             solution_update[i] = 0;
             residual[i] = 0;
           }
+          // pcout << "end: " << *index << std::endl;
       }  // end of dof loop
 
     all_constraints.merge(physical_constraints);
@@ -725,14 +733,17 @@ namespace phase_field
 
     // set up the linear solver and solve the system
     unsigned int max_iter = 5*system_matrix.m();
-    SolverControl solver_control(max_iter, 1e-10);
+    SolverControl solver_control(max_iter, 1e-10*rhs_vector.l2_norm());
 
     // SolverFGMRES<TrilinosWrappers::MPI::BlockVector>
     SolverGMRES<TrilinosWrappers::MPI::BlockVector>
       solver(solver_control);
 
-    // all_constraints.set_zero(solution_update);
-    solver.solve(system_matrix, solution_update, rhs_vector, preconditioner);
+    solution_update = 0;
+    all_constraints.set_zero(solution_update);
+    // solver.solve(system_matrix, solution_update, rhs_vector, preconditioner);
+    solver.solve(reduced_system_matrix, solution_update,
+                 reduced_rhs_vector, preconditioner);
 
     pcout << "Solved in " << solver_control.last_step()
           << " iterations." << std::endl;

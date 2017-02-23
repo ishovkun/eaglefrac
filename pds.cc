@@ -77,14 +77,27 @@ namespace pds_solid
   template <int dim>
   void PDSSolid<dim>::create_mesh()
   {
-    double half_length = 0.005;
+    double length = 0.01;
     GridGenerator::hyper_cube_slit(triangulation,
-                                   0, half_length,
-                                   /*colorize = */ false);
-    const Point<dim> top(0, half_length);
-    const Point<dim> bottom(0, -half_length);
-
+                                   0, length,
+                                   /*colorize = */ true);
     {// Assign boundary ids
+      // outer domain middle-edge points
+      const Point<dim> top(0, length);
+      const Point<dim> bottom(0, 0);
+      const Point<dim> right(length, 0);
+      const Point<dim> left(0, 0);
+
+      // outer domain boundary id's
+      const int left_boundary_id = 0;
+      const int right_boundary_id = 1;
+      const int bottom_boundary_id = 2;
+      const int top_boundary_id = 3;
+
+      // slit edge id's
+      const int slit_edge1_id = 4;
+      const int slit_edge2_id = 5;
+
       typename Triangulation<2>::active_cell_iterator
         cell = triangulation.begin_active(),
         endc = triangulation.end();
@@ -95,16 +108,24 @@ namespace pds_solid
              ++face_no)
           if (cell->face(face_no)->at_boundary())
             {
+              // renumber slit boundary id's
+              if (cell->face(face_no)->boundary_id() == 1)
+                cell->face(face_no)->set_boundary_id(slit_edge1_id);
+              if (cell->face(face_no)->boundary_id() == 2)
+                cell->face(face_no)->set_boundary_id(slit_edge2_id);
+              // Set outer boundary id's
               if (std::fabs(cell->face(face_no)->center()[1] - top[1]) < 1e-12)
-                cell->face(face_no)->set_boundary_id(2);
+                cell->face(face_no)->set_boundary_id(top_boundary_id);
               if (std::fabs(cell->face(face_no)->center()[1] - bottom[1]) < 1e-12)
-                cell->face(face_no)->set_boundary_id(1);
-            }
-    }
+                cell->face(face_no)->set_boundary_id(bottom_boundary_id);
+              if (std::fabs(cell->face(face_no)->center()[0] - left[0]) < 1e-12)
+                cell->face(face_no)->set_boundary_id(left_boundary_id);
+              if (std::fabs(cell->face(face_no)->center()[0] - right[0]) < 1e-12)
+                cell->face(face_no)->set_boundary_id(right_boundary_id);
+            }  // end cell loop
+    } // end assigning boundary id's
 
-    int initial_refinement_level = 3;
-    triangulation.refine_global(initial_refinement_level);
-  }
+  }  // eom
 
   template <int dim>
   void PDSSolid<dim>::impose_displacement_on_solution(double time)
@@ -121,6 +142,7 @@ namespace pds_solid
   void PDSSolid<dim>::run()
   {
     create_mesh();
+    triangulation.refine_global(data.initial_refinement_level);
     // read_mesh();
     phase_field_solver.setup_dofs();
 
@@ -139,13 +161,13 @@ namespace pds_solid
         IndexSet old_active_set(phase_field_solver.active_set);
         impose_displacement_on_solution(time);
 
-        int n_iter = 1;
-        int max_newton_iter = 50;
+        int n_iter = 0;
+        int max_newton_iter = 100;
         double newton_tolerance = 1e-6;
         while (n_iter < max_newton_iter)
           {
             pcout << "Newton iteration: " << n_iter << "\t";
-            if (n_iter > 1)
+            if (n_iter > 0)
               {
                 phase_field_solver.compute_residual();
                 phase_field_solver.compute_active_set();
@@ -165,6 +187,11 @@ namespace pds_solid
 
             phase_field_solver.assemble_system();
             phase_field_solver.solve();
+
+            // phase_field_solver.compute_residual();
+            // double error = phase_field_solver.residual_norm();
+            // pcout << "full error = " << error << "\t";
+
             phase_field_solver.solution_update *= 0.6;
             phase_field_solver.solution += phase_field_solver.solution_update;
 

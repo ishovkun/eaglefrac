@@ -44,6 +44,8 @@ namespace input_data {
 
   public:
     std::vector<double> displacement_boundary_velocities;
+    double newton_tolerance;
+    unsigned int max_newton_iter, max_linear_solver_iter;
 
   };
 
@@ -57,14 +59,22 @@ namespace input_data {
     // shear_modulus = 0.5*E/(1 + nu);
     lame_constant = 121.15*1e3/(1e-6);
     shear_modulus = 80.77*1e3/(1e-6);
-    displacement_boundary_labels = {1, 2};
-    displacement_boundary_components = {1 ,1};
+    // displacement_boundary_labels = {1, 2};
+    // displacement_boundary_components = {1 ,1};
+    // displacement_boundary_velocities = {0, 1e-3};
+    displacement_boundary_labels = {0, 1};
+    displacement_boundary_components = {0 ,0};
     displacement_boundary_velocities = {0, 1e-3};
     // regularization_parameter_epsilon = 1;
     penalty_parameter = 0.125;
     // penalty_parameter = 100;
     regularization_parameter_kappa = 1e-10;
     energy_release_rate = 2.7/(1e-3);
+
+    initial_refinement_level = 5;
+
+    // Solver
+    // max_newton_iter = 50;
   }  // EOM
 
 }  // end of namespace

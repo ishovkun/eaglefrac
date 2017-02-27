@@ -162,8 +162,8 @@ namespace pds_solid
         impose_displacement_on_solution(time);
 
         int n_iter = 0;
-        int max_newton_iter = 100;
-        double newton_tolerance = 1e-6;
+        const int max_newton_iter = 200;
+        const double newton_tolerance = 1e-6;
         while (n_iter < max_newton_iter)
           {
             pcout << "Newton iteration: " << n_iter << "\t";
@@ -176,6 +176,8 @@ namespace pds_solid
                       << "\t";
                 double error = phase_field_solver.residual_norm();
                 pcout << "error = " << error << "\t";
+
+                // break condition
                 if ((phase_field_solver.active_set == old_active_set) &&
                     (error < newton_tolerance))
                   {

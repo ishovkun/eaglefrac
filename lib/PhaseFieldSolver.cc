@@ -53,7 +53,8 @@ namespace phase_field
     ~PhaseFieldSolver();
 
     void setup_dofs();
-    double compute_residual();
+    double compute_nonlinear_residual(const
+      TrilinosWrappers::MPI::BlockVector &linerarization_point);
     double residual_norm() const;
     void assemble_system();
     void compute_active_set();
@@ -81,13 +82,11 @@ namespace phase_field
     std::vector<IndexSet> owned_partitioning, relevant_partitioning;
     IndexSet locally_owned_dofs;
 
-    TrilinosWrappers::MPI::BlockVector reduced_rhs_vector;
     TrilinosWrappers::MPI::BlockVector mass_matrix_diagonal;
 
     TrilinosWrappers::BlockSparseMatrix reduced_system_matrix;
     TrilinosWrappers::BlockSparseMatrix preconditioner_matrix;
 
-    ConstraintMatrix physical_constraints, all_constraints;
 
 
     double min_cell_size;
@@ -97,6 +96,8 @@ namespace phase_field
     IndexSet active_set;
     TrilinosWrappers::MPI::BlockVector solution, solution_update, residual;
     TrilinosWrappers::MPI::BlockVector old_solution, old_old_solution;
+    TrilinosWrappers::MPI::BlockVector reduced_rhs_vector;
+    ConstraintMatrix physical_constraints, all_constraints;
   };
 
 
@@ -457,7 +458,7 @@ namespace phase_field
 
                     local_matrix(i, j) += (m_u_u + m_phi_u + m_phi_phi) * jxw;
 
-                  }  // end j loop
+                  }  // end i&j loop
             }  // end q loop
 
           // pcout << "\n cell matrix = " << std::endl;
@@ -575,7 +576,9 @@ namespace phase_field
       {
         const unsigned int i = *index;
         if (residual[i]/mass_matrix_diagonal[i] +
-            data.penalty_parameter*solution_update[i] > 0)
+            data.penalty_parameter*
+            (solution[i] + solution_update[i] - old_solution[i])
+            > 0)
           {
             active_set.add_index(i);
             all_constraints.add_line(i);
@@ -585,6 +588,8 @@ namespace phase_field
           }
           // pcout << "end: " << *index << std::endl;
       }  // end of dof loop
+      residual.compress(VectorOperation::insert);
+      solution_update.compress(VectorOperation::insert);
 
     all_constraints.merge(physical_constraints);
     all_constraints.close();
@@ -593,7 +598,8 @@ namespace phase_field
 
 
   template <int dim>
-  double PhaseFieldSolver<dim>::compute_residual()
+  double PhaseFieldSolver<dim>::
+  compute_nonlinear_residual(const TrilinosWrappers::MPI::BlockVector &linerarization_point)
   {
     // this is not gonna work because we updated the solution already
     // return system_matrix.residual(residual, solution_update, rhs_vector);
@@ -650,75 +656,75 @@ namespace phase_field
       endc = dof_handler.end();
 
   for (; cell!=endc; ++cell)
-      if (cell->is_locally_owned())
-        {
-          local_rhs = 0;
+    if (cell->is_locally_owned())
+      {
+        local_rhs = 0;
 
-          fe_values.reinit(cell);
+        fe_values.reinit(cell);
 
-          fe_values[displacement].get_function_symmetric_gradients
-            (solution, strain_tensor_values);
+        fe_values[displacement].get_function_symmetric_gradients
+          (linerarization_point, strain_tensor_values);
 
-          fe_values[phase_field].get_function_values(solution,
-                                                     phi_values);
-          fe_values[phase_field].get_function_values(old_solution,
-                                                     old_phi_values);
-          fe_values[phase_field].get_function_values(old_old_solution,
-                                                     old_old_phi_values);
-          fe_values[phase_field].get_function_gradients(solution,
-                                                        grad_phi_values);
+        fe_values[phase_field].get_function_values(linerarization_point,
+                                                   phi_values);
+        fe_values[phase_field].get_function_values(old_solution,
+                                                   old_phi_values);
+        fe_values[phase_field].get_function_values(old_old_solution,
+                                                   old_old_phi_values);
+        fe_values[phase_field].get_function_gradients(linerarization_point,
+                                                      grad_phi_values);
 
-          for (unsigned int q=0; q<n_q_points; ++q)
+        for (unsigned int q=0; q<n_q_points; ++q)
+          {
+            // convert from non-symmetric tensor
+            convert_to_tensor(strain_tensor_values[q], strain_tensor_value);
+            stress_tensor_minus = 0;
+            stress_tensor_plus =
+                  double_contract<2, 0, 3, 1>(gassman_tensor, strain_tensor_value);
+
+          // TODO: include time
+          double d_phi = old_phi_values[q] - old_old_phi_values[q];
+          double phi_e = old_phi_values[q] + d_phi;  // extrapolated
+
+          double phi_value = phi_values[q];
+          double jxw = fe_values.JxW(q);
+
+          for (unsigned int k=0; k<dofs_per_cell; ++k)
             {
-              // convert from non-symmetric tensor
-              convert_to_tensor(strain_tensor_values[q], strain_tensor_value);
-              stress_tensor_minus = 0;
-              stress_tensor_plus =
-                    double_contract<2, 0, 3, 1>(gassman_tensor, strain_tensor_value);
+              eps_u[k] = fe_values[displacement].symmetric_gradient(k, q);
+              xi_phi[k] = fe_values[phase_field].value(k ,q);
+              grad_xi_phi[k] = fe_values[phase_field].gradient(k, q);
+            }  // end k loop
 
-            // TODO: include time
-            double d_phi = old_phi_values[q] - old_old_phi_values[q];
-            double phi_e = old_phi_values[q] + d_phi;  // extrapolated
-
-            double phi_value = phi_values[q];
-            double jxw = fe_values.JxW(q);
-
-            for (unsigned int k=0; k<dofs_per_cell; ++k)
-              {
-                eps_u[k] = fe_values[displacement].symmetric_gradient(k, q);
-                xi_phi[k] = fe_values[phase_field].value(k ,q);
-                grad_xi_phi[k] = fe_values[phase_field].gradient(k, q);
-              }  // end k loop
-
-              // Assemble local rhs +
-              for (unsigned int i=0; i<dofs_per_cell; ++i)
-                {
-                  double rhs_u =
-                      ((1.-kappa)*phi_e*phi_e + kappa)
-                        *scalar_product(stress_tensor_plus, eps_u[i])
-                      +
-                      scalar_product(stress_tensor_minus, eps_u[i]);
-
-                    double rhs_phi =
-                      (1.-kappa)*phi_value*xi_phi[i]
-                        *scalar_product(stress_tensor_plus, strain_tensor_value)
-                      -
-                      gamma_c/e*(1-phi_value)*xi_phi[i]
-                      +
-                      gamma_c*e
-                        *scalar_product(grad_phi_values[q], grad_xi_phi[i])
-                      ;
-
-                    local_rhs[i] -= (rhs_u + rhs_phi)*jxw;
-                  }  // end i loop
-              }  // end q loop
-
-            cell->get_dof_indices(local_dof_indices);
-
+            // Assemble local rhs +
             for (unsigned int i=0; i<dofs_per_cell; ++i)
-              residual[local_dof_indices[i]] += local_rhs(i);
+              {
+                double rhs_u =
+                    ((1.-kappa)*phi_e*phi_e + kappa)
+                      *scalar_product(stress_tensor_plus, eps_u[i])
+                    +
+                    scalar_product(stress_tensor_minus, eps_u[i]);
 
-          }  // end of cell loop
+                  double rhs_phi =
+                    (1.-kappa)*phi_value*xi_phi[i]
+                      *scalar_product(stress_tensor_plus, strain_tensor_value)
+                    -
+                    gamma_c/e*(1-phi_value)*xi_phi[i]
+                    +
+                    gamma_c*e
+                      *scalar_product(grad_phi_values[q], grad_xi_phi[i])
+                    ;
+
+                  local_rhs[i] -= (rhs_u + rhs_phi)*jxw;
+                }  // end i loop
+            }  // end q loop
+
+          cell->get_dof_indices(local_dof_indices);
+
+          for (unsigned int i=0; i<dofs_per_cell; ++i)
+            residual[local_dof_indices[i]] += local_rhs(i);
+
+      }  // end of cell loop
 
 
     residual.compress(VectorOperation::add);
@@ -736,7 +742,7 @@ namespace phase_field
   double PhaseFieldSolver<dim>::residual_norm() const
   {
     return residual.l2_norm();
-  }
+  }  // eom
 
 
   template <int dim>
@@ -813,20 +819,18 @@ namespace phase_field
 
     // set up the linear solver and solve the system
     unsigned int max_iter = 5*reduced_system_matrix.m();
+    // pcout << "rhs norm" << reduced_rhs_vector.l2_norm() << "\t";
     SolverControl solver_control(max_iter, 1e-10*reduced_rhs_vector.l2_norm());
 
     // SolverFGMRES<TrilinosWrappers::MPI::BlockVector>
     SolverGMRES<TrilinosWrappers::MPI::BlockVector>
       solver(solver_control);
 
-    solution_update = 0;
     all_constraints.set_zero(solution_update);
-    // solver.solve(system_matrix, solution_update, rhs_vector, preconditioner);
     solver.solve(reduced_system_matrix, solution_update,
                  reduced_rhs_vector, preconditioner);
 
-    pcout << "Solved in " << solver_control.last_step()
-          << " iterations." << std::endl;
+    pcout << "GMRES: " << solver_control.last_step() << "\t";
 
     all_constraints.distribute(solution_update);
 

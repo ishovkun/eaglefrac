@@ -146,6 +146,10 @@ namespace pds_solid
     // read_mesh();
     phase_field_solver.setup_dofs();
 
+    // this vector is used to store solution values for line search
+    TrilinosWrappers::MPI::BlockVector tmp_vector;
+    tmp_vector.reinit(phase_field_solver.solution);
+
     // set initial phase-field to 1
     phase_field_solver.solution.block(1) = 1;
     phase_field_solver.old_solution.block(1) = 1;
@@ -161,27 +165,31 @@ namespace pds_solid
         IndexSet old_active_set(phase_field_solver.active_set);
         impose_displacement_on_solution(time);
 
-        int n_iter = 0;
+        int newton_step = 0;
         const int max_newton_iter = 200;
         const double newton_tolerance = 1e-6;
-        while (n_iter < max_newton_iter)
+        while (newton_step < max_newton_iter)
           {
-            pcout << "Newton iteration: " << n_iter << "\t";
-            if (n_iter > 0)
+            pcout << "Newton iteration: " << newton_step << "\t";
+            double error;
+            if (newton_step > 0)
               {
-                phase_field_solver.compute_residual();
+                phase_field_solver.compute_nonlinear_residual(phase_field_solver.solution);
                 phase_field_solver.compute_active_set();
                 pcout << "Size of active set: "
                       << phase_field_solver.active_set.n_elements()
                       << "\t";
-                double error = phase_field_solver.residual_norm();
+                error = phase_field_solver.residual_norm();
                 pcout << "error = " << error << "\t";
 
                 // break condition
-                if ((phase_field_solver.active_set == old_active_set) &&
+                if ((Utilities::MPI::sum(
+                  (phase_field_solver.active_set == old_active_set) ? 0 : 1,
+                   mpi_communicator) == 0)
+                    &&
                     (error < newton_tolerance))
                   {
-                    pcout << "Cool" << std::endl;
+                    pcout << "Active set did not change" << std::endl;
                     break;
                   }
                 old_active_set = phase_field_solver.active_set;
@@ -190,15 +198,34 @@ namespace pds_solid
             phase_field_solver.assemble_system();
             phase_field_solver.solve();
 
-            // phase_field_solver.compute_residual();
-            // double error = phase_field_solver.residual_norm();
-            // pcout << "full error = " << error << "\t";
+            // backtrace line search
+            // double alpha = 1;
+            // if (newton_step > 0)
+            // {
+            //   for (int i = 0; i < 5; i++)
+            //   {
+            //     alpha = std::pow(0.6, static_cast<double>(i));
+            //     tmp_vector = phase_field_solver.solution;
+            //     tmp_vector.add(alpha, phase_field_solver.solution_update);
+            //     phase_field_solver.compute_nonlinear_residual(tmp_vector);
+            //     phase_field_solver.all_constraints.set_zero(phase_field_solver.residual);
+            //     double new_norm = phase_field_solver.residual_norm();
+            //     if (new_norm < error/2)
+            //       {
+            //         pcout << "alpha = " << alpha << "\t";
+            //         break;
+            //       }
+            //   }
+            //   phase_field_solver.solution = tmp_vector;
+            // }
+            // else
+            //   phase_field_solver.solution += phase_field_solver.solution_update;
 
-            phase_field_solver.solution_update *= 0.6;
-            phase_field_solver.solution += phase_field_solver.solution_update;
+            phase_field_solver.solution.add(0.6, phase_field_solver.solution_update);
 
-            n_iter++;
+            newton_step++;
 
+            pcout << std::endl;
           }  // End Newton iter
 
         output_results(time_step_number);

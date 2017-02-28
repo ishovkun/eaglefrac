@@ -47,6 +47,7 @@ namespace constitutive_model {
   Tensor<4,dim> isotropic_gassman_tensor(double lambda, double mu)
   {
 	  Tensor<4, dim> tmp;
+    // double zero = static_case<double>(0);
 	  for (unsigned int i=0; i<dim; ++i)
 		  for (unsigned int j=0; j<dim; ++j)
 			  for (unsigned int k=0; k<dim; ++k)

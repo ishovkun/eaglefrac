@@ -802,8 +802,8 @@ namespace phase_field
     // set up the linear solver and solve the system
     unsigned int max_iter = 5*reduced_system_matrix.m();
     // pcout << "rhs norm" << reduced_rhs_vector.l2_norm() << "\t";
-    // double tol = std::max(1e-10*reduced_rhs_vector.l2_norm(), 1e-10);
-    double tol = 1e-10*reduced_rhs_vector.l2_norm();
+    double tol = std::max(1e-10*reduced_rhs_vector.l2_norm(), 1e-12);
+    // double tol = 1e-10*reduced_rhs_vector.l2_norm();
     SolverControl solver_control(max_iter, tol);
 
     // SolverFGMRES<TrilinosWrappers::MPI::BlockVector>

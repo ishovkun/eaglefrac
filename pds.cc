@@ -220,7 +220,7 @@ namespace pds_solid
             // {
             //   for (int i = 0; i < 6; i++)
             //   {
-            //     alpha = std::pow(0.8, static_cast<double>(i));
+            //     alpha = std::pow(0.6, static_cast<double>(i));
             //     tmp_vector = phase_field_solver.solution;
             //     tmp_vector.add(alpha, phase_field_solver.solution_update);
             //     phase_field_solver.compute_nonlinear_residual(tmp_vector);

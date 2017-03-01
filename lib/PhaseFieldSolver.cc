@@ -330,9 +330,8 @@ namespace phase_field
 
     // Equation data
     double kappa = data.regularization_parameter_kappa;
-    double e =
-      data.penalty_parameter
-      *std::pow(min_cell_size, 0.2);
+    // double e = data.penalty_parameter*std::pow(min_cell_size, 0.5);
+    double e = 3*min_cell_size;
 
     double gamma_c = data.energy_release_rate;
 
@@ -383,7 +382,8 @@ namespace phase_field
 
               // TODO: include time into hereouble_contract<2, 0, 3, 1>(gassman_tensor,
               double d_phi = old_phi_values[q] - old_old_phi_values[q];
-              double phi_e = old_phi_values[q] + d_phi;  // extrapolated
+              double phi_tilda = old_phi_values[q] + d_phi;  // extrapolated
+
               double phi_value = phi_values[q];
               double jxw = fe_values.JxW(q);
 
@@ -411,7 +411,7 @@ namespace phase_field
               for (unsigned int i=0; i<dofs_per_cell; ++i)
                 {
                   double rhs_u =
-                    ((1.-kappa)*phi_e*phi_e + kappa)
+                    ((1.-kappa)*phi_tilda*phi_tilda + kappa)
                       *scalar_product(stress_tensor_plus, eps_u[i])
                     +
                     scalar_product(stress_tensor_minus, eps_u[i]);
@@ -435,7 +435,7 @@ namespace phase_field
                 for (unsigned int j=0; j<dofs_per_cell; ++j)
                   {
                     double m_u_u =
-                      ((1.-kappa)*phi_e*phi_e + kappa)
+                      ((1.-kappa)*phi_tilda*phi_tilda + kappa)
                         *scalar_product(sigma_u_plus[j], eps_u[i])
                       +
                       scalar_product(sigma_u_minus[j], eps_u[i]);
@@ -529,9 +529,13 @@ namespace phase_field
                                    fe_values.shape_value(i, q_point) *
                                    fe_values.JxW(q_point));
           cell->get_dof_indices(local_dof_indices);
-          physical_constraints.distribute_local_to_global(cell_matrix,
-                                                          local_dof_indices,
-                                                          mass_matrix);
+          // physical_constraints.distribute_local_to_global(cell_matrix,
+          //                                                 local_dof_indices,
+          //                                                 mass_matrix);
+          for (unsigned int i = 0; i < dofs_per_cell; i++)
+            mass_matrix.add(local_dof_indices[i],
+                            local_dof_indices[i],
+                            cell_matrix(i, i));
 
           double cell_size = cell->diameter()/std::sqrt(dim);
           if (cell_size < min_local_cell_size)
@@ -577,7 +581,7 @@ namespace phase_field
         const unsigned int i = *index;
         if (residual[i]/mass_matrix_diagonal[i] +
             data.penalty_parameter*
-            (solution[i] + solution_update[i] - old_solution[i])
+            (solution[i] - old_solution[i])
             > 0)
           {
             active_set.add_index(i);
@@ -640,9 +644,8 @@ namespace phase_field
 
     // Equation data
     double kappa = data.regularization_parameter_kappa;
-    double e =
-      data.penalty_parameter
-      *std::pow(min_cell_size, 0.2);
+    // double e = data.penalty_parameter*std::pow(min_cell_size, 0.5);
+    double e = 3*min_cell_size;
 
     double gamma_c = data.energy_release_rate;
 
@@ -684,7 +687,7 @@ namespace phase_field
 
           // TODO: include time
           double d_phi = old_phi_values[q] - old_old_phi_values[q];
-          double phi_e = old_phi_values[q] + d_phi;  // extrapolated
+          double phi_tilda = old_phi_values[q] + d_phi;  // extrapolated
 
           double phi_value = phi_values[q];
           double jxw = fe_values.JxW(q);
@@ -700,7 +703,7 @@ namespace phase_field
             for (unsigned int i=0; i<dofs_per_cell; ++i)
               {
                 double rhs_u =
-                    ((1.-kappa)*phi_e*phi_e + kappa)
+                    ((1.-kappa)*phi_tilda*phi_tilda + kappa)
                       *scalar_product(stress_tensor_plus, eps_u[i])
                     +
                     scalar_product(stress_tensor_minus, eps_u[i]);

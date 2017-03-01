@@ -80,7 +80,7 @@ namespace pds_solid
     double length = 0.01;
     GridGenerator::hyper_cube_slit(triangulation,
                                    0, length,
-                                   /*colorize = */ true);
+                                   /*colorize = */ false);
     {// Assign boundary ids
       // outer domain middle-edge points
       const Point<dim> top(0, length);
@@ -98,6 +98,15 @@ namespace pds_solid
       const int slit_edge1_id = 4;
       const int slit_edge2_id = 5;
 
+      { // Colorize slit boundaries
+        typename Triangulation<2>::active_cell_iterator
+          cell = triangulation.begin_active();
+
+        cell->face(1)->set_boundary_id(slit_edge1_id);  // left slit edge
+        ++cell;
+        cell->face(0)->set_boundary_id(slit_edge2_id);  // right slit edge
+      }
+
       typename Triangulation<2>::active_cell_iterator
         cell = triangulation.begin_active(),
         endc = triangulation.end();
@@ -108,20 +117,21 @@ namespace pds_solid
              ++face_no)
           if (cell->face(face_no)->at_boundary())
             {
-              // renumber slit boundary id's
-              if (cell->face(face_no)->boundary_id() == 1)
-                cell->face(face_no)->set_boundary_id(slit_edge1_id);
-              if (cell->face(face_no)->boundary_id() == 2)
-                cell->face(face_no)->set_boundary_id(slit_edge2_id);
-              // Set outer boundary id's
-              if (std::fabs(cell->face(face_no)->center()[1] - top[1]) < 1e-12)
-                cell->face(face_no)->set_boundary_id(top_boundary_id);
-              if (std::fabs(cell->face(face_no)->center()[1] - bottom[1]) < 1e-12)
-                cell->face(face_no)->set_boundary_id(bottom_boundary_id);
-              if (std::fabs(cell->face(face_no)->center()[0] - left[0]) < 1e-12)
-                cell->face(face_no)->set_boundary_id(left_boundary_id);
-              if (std::fabs(cell->face(face_no)->center()[0] - right[0]) < 1e-12)
-                cell->face(face_no)->set_boundary_id(right_boundary_id);
+              if (
+                (cell->face(face_no)->boundary_id() != slit_edge1_id)
+                &&
+                (cell->face(face_no)->boundary_id() != slit_edge2_id)
+              )
+              {
+                if (std::fabs(cell->face(face_no)->center()[1] - top[1]) < 1e-12)
+                  cell->face(face_no)->set_boundary_id(top_boundary_id);
+                if (std::fabs(cell->face(face_no)->center()[1] - bottom[1]) < 1e-12)
+                  cell->face(face_no)->set_boundary_id(bottom_boundary_id);
+                if (std::fabs(cell->face(face_no)->center()[0] - left[0]) < 1e-12)
+                  cell->face(face_no)->set_boundary_id(left_boundary_id);
+                if (std::fabs(cell->face(face_no)->center()[0] - right[0]) < 1e-12)
+                  cell->face(face_no)->set_boundary_id(right_boundary_id);
+              }
             }  // end cell loop
     } // end assigning boundary id's
 
@@ -155,7 +165,9 @@ namespace pds_solid
     phase_field_solver.old_solution.block(1) = 1;
 
     int time_step_number = 0;
-    double time = 1, t_max = 3, time_step = 1;
+    double time = 1e-4;
+    double t_max = 1e-2;
+    double time_step = 1e-4;
     while(time < t_max)
       {
         pcout << "Time: " << time << std::endl;
@@ -166,7 +178,7 @@ namespace pds_solid
         impose_displacement_on_solution(time);
 
         int newton_step = 0;
-        const int max_newton_iter = 200;
+        const int max_newton_iter = 300;
         const double newton_tolerance = 1e-6;
         while (newton_step < max_newton_iter)
           {
@@ -202,26 +214,26 @@ namespace pds_solid
             // double alpha = 1;
             // if (newton_step > 0)
             // {
-            //   for (int i = 0; i < 5; i++)
+            //   for (int i = 0; i < 10; i++)
             //   {
-            //     alpha = std::pow(0.6, static_cast<double>(i));
+            //     alpha = std::pow(0.5, static_cast<double>(i));
             //     tmp_vector = phase_field_solver.solution;
             //     tmp_vector.add(alpha, phase_field_solver.solution_update);
             //     phase_field_solver.compute_nonlinear_residual(tmp_vector);
             //     phase_field_solver.all_constraints.set_zero(phase_field_solver.residual);
             //     double new_norm = phase_field_solver.residual_norm();
-            //     if (new_norm < error/2)
+            //     if (new_norm < error)
             //       {
-            //         pcout << "alpha = " << alpha << "\t";
             //         break;
             //       }
             //   }
+            //   pcout << "alpha = " << alpha << "\t";
             //   phase_field_solver.solution = tmp_vector;
             // }
             // else
             //   phase_field_solver.solution += phase_field_solver.solution_update;
 
-            phase_field_solver.solution.add(0.6, phase_field_solver.solution_update);
+            phase_field_solver.solution.add(0.3, phase_field_solver.solution_update);
 
             newton_step++;
 

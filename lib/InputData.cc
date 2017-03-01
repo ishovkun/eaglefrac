@@ -59,15 +59,14 @@ namespace input_data {
     // shear_modulus = 0.5*E/(1 + nu);
     lame_constant = 121.15*1e3/(1e-6);
     shear_modulus = 80.77*1e3/(1e-6);
-    // displacement_boundary_labels = {1, 2};
-    // displacement_boundary_components = {1 ,1};
-    // displacement_boundary_velocities = {0, 1e-3};
-    displacement_boundary_labels = {0, 1};
-    displacement_boundary_components = {0 ,0};
-    displacement_boundary_velocities = {0, 1e-3};
+
+    displacement_boundary_labels =     {0, 1,    1};
+    displacement_boundary_components = {0 ,0,    1};
+    displacement_boundary_velocities = {0, 1e-3, 0};
     // regularization_parameter_epsilon = 1;
-    penalty_parameter = 0.125;
-    // penalty_parameter = 100;
+    // penalty_parameter = 0.125;
+    penalty_parameter = 0.25;
+    // penalty_parameter = 10;
     regularization_parameter_kappa = 1e-10;
     energy_release_rate = 2.7/(1e-3);
 

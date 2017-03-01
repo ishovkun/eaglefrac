@@ -57,7 +57,8 @@ namespace phase_field
       TrilinosWrappers::MPI::BlockVector &linerarization_point);
     double residual_norm() const;
     void assemble_system();
-    void compute_active_set();
+    void compute_active_set(TrilinosWrappers::MPI::BlockVector
+                            &linerarization_point);
     void impose_displacement(const std::vector<double> &displacement_values);
     void solve();
 
@@ -86,10 +87,6 @@ namespace phase_field
 
     TrilinosWrappers::BlockSparseMatrix reduced_system_matrix;
     TrilinosWrappers::BlockSparseMatrix preconditioner_matrix;
-
-
-
-    double min_cell_size;
 
   public:
     double time_step;
@@ -330,8 +327,7 @@ namespace phase_field
 
     // Equation data
     double kappa = data.regularization_parameter_kappa;
-    // double e = data.penalty_parameter*std::pow(min_cell_size, 0.5);
-    double e = 3*min_cell_size;
+    double e = data.regularization_parameter_epsilon;
 
     double gamma_c = data.energy_release_rate;
 
@@ -508,10 +504,6 @@ namespace phase_field
     FullMatrix<double> cell_matrix(dofs_per_cell, dofs_per_cell);
     std::vector<types::global_dof_index> local_dof_indices(dofs_per_cell);
 
-    // additionally, compute finest cell size
-    double min_local_cell_size =
-      triangulation.last()->diameter()/std::sqrt(dim);
-
     typename DoFHandler<dim>::active_cell_iterator
       cell = dof_handler.begin_active(),
       endc = dof_handler.end();
@@ -536,18 +528,10 @@ namespace phase_field
             mass_matrix.add(local_dof_indices[i],
                             local_dof_indices[i],
                             cell_matrix(i, i));
-
-          double cell_size = cell->diameter()/std::sqrt(dim);
-          if (cell_size < min_local_cell_size)
-            min_local_cell_size = cell_size;
           // break;
         }  // end cell loop
 
     mass_matrix.compress(VectorOperation::add);
-
-    min_cell_size =
-      -Utilities::MPI::max(-min_local_cell_size, MPI_COMM_WORLD);
-    pcout << "Minimum cell size: " << min_cell_size << std::endl;
 
     computing_timer.exit_section();
 
@@ -556,7 +540,7 @@ namespace phase_field
 
   template <int dim>
   void PhaseFieldSolver<dim>::
-  compute_active_set()
+  compute_active_set(TrilinosWrappers::MPI::BlockVector &linerarization_point)
   {
     computing_timer.enter_section("Computing active set");
     active_set.clear();
@@ -580,20 +564,17 @@ namespace phase_field
       {
         const unsigned int i = *index;
         if (residual[i]/mass_matrix_diagonal[i] +
-            data.penalty_parameter*
-            (solution[i] - old_solution[i])
+            data.penalty_parameter*(linerarization_point[i] - old_solution[i])
             > 0)
           {
             active_set.add_index(i);
             all_constraints.add_line(i);
             all_constraints.set_inhomogeneity(i, 0);
-            solution_update[i] = 0;
             residual[i] = 0;
           }
           // pcout << "end: " << *index << std::endl;
       }  // end of dof loop
       residual.compress(VectorOperation::insert);
-      solution_update.compress(VectorOperation::insert);
 
     all_constraints.merge(physical_constraints);
     all_constraints.close();
@@ -644,9 +625,7 @@ namespace phase_field
 
     // Equation data
     double kappa = data.regularization_parameter_kappa;
-    // double e = data.penalty_parameter*std::pow(min_cell_size, 0.5);
-    double e = 3*min_cell_size;
-
+    double e = data.regularization_parameter_epsilon;
     double gamma_c = data.energy_release_rate;
 
     Tensor<4,dim> gassman_tensor =
@@ -823,7 +802,9 @@ namespace phase_field
     // set up the linear solver and solve the system
     unsigned int max_iter = 5*reduced_system_matrix.m();
     // pcout << "rhs norm" << reduced_rhs_vector.l2_norm() << "\t";
-    SolverControl solver_control(max_iter, 1e-10*reduced_rhs_vector.l2_norm());
+    // double tol = std::max(1e-10*reduced_rhs_vector.l2_norm(), 1e-10);
+    double tol = 1e-10*reduced_rhs_vector.l2_norm();
+    SolverControl solver_control(max_iter, tol);
 
     // SolverFGMRES<TrilinosWrappers::MPI::BlockVector>
     SolverGMRES<TrilinosWrappers::MPI::BlockVector>

@@ -156,6 +156,10 @@ namespace pds_solid
     // read_mesh();
     phase_field_solver.setup_dofs();
 
+    // Compute regularization_parameter_epsilon
+    double minimum_mesh_size = (0.01/2)/std::pow(2, data.initial_refinement_level);
+    data.regularization_parameter_epsilon = 2*minimum_mesh_size;
+
     // this vector is used to store solution values for line search
     TrilinosWrappers::MPI::BlockVector tmp_vector;
     tmp_vector.reinit(phase_field_solver.solution);
@@ -165,9 +169,9 @@ namespace pds_solid
     phase_field_solver.old_solution.block(1) = 1;
 
     int time_step_number = 0;
-    double time = 1e-4;
-    double t_max = 1e-2;
     double time_step = 1e-4;
+    double time = 12e-3;
+    double t_max = 1;
     while(time < t_max)
       {
         pcout << "Time: " << time << std::endl;
@@ -187,7 +191,7 @@ namespace pds_solid
             if (newton_step > 0)
               {
                 phase_field_solver.compute_nonlinear_residual(phase_field_solver.solution);
-                phase_field_solver.compute_active_set();
+                phase_field_solver.compute_active_set(phase_field_solver.solution);
                 pcout << "Size of active set: "
                       << phase_field_solver.active_set.n_elements()
                       << "\t";
@@ -201,7 +205,7 @@ namespace pds_solid
                     &&
                     (error < newton_tolerance))
                   {
-                    pcout << "Active set did not change" << std::endl;
+                    pcout << "Converged!" << std::endl;
                     break;
                   }
                 old_active_set = phase_field_solver.active_set;
@@ -211,16 +215,16 @@ namespace pds_solid
             phase_field_solver.solve();
 
             // backtrace line search
-            // double alpha = 1;
+            // double alpha;
             // if (newton_step > 0)
             // {
-            //   for (int i = 0; i < 10; i++)
+            //   for (int i = 0; i < 6; i++)
             //   {
-            //     alpha = std::pow(0.5, static_cast<double>(i));
+            //     alpha = std::pow(0.8, static_cast<double>(i));
             //     tmp_vector = phase_field_solver.solution;
             //     tmp_vector.add(alpha, phase_field_solver.solution_update);
             //     phase_field_solver.compute_nonlinear_residual(tmp_vector);
-            //     phase_field_solver.all_constraints.set_zero(phase_field_solver.residual);
+                // phase_field_solver.all_constraints.set_zero(phase_field_solver.residual);
             //     double new_norm = phase_field_solver.residual_norm();
             //     if (new_norm < error)
             //       {
@@ -233,7 +237,7 @@ namespace pds_solid
             // else
             //   phase_field_solver.solution += phase_field_solver.solution_update;
 
-            phase_field_solver.solution.add(0.3, phase_field_solver.solution_update);
+            phase_field_solver.solution.add(0.6, phase_field_solver.solution_update);
 
             newton_step++;
 

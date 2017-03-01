@@ -8,3 +8,4 @@ lib/liblib.a
 *.cmake
 *.msh
 amesos-failure.dat
+solution/*

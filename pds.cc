@@ -28,6 +28,7 @@ namespace pds_solid
     void setup_dofs();
     void impose_displacement_on_solution(double time);
     void output_results(int time_step_number) const;
+    void refine_mesh();
 
     MPI_Comm mpi_communicator;
 
@@ -77,7 +78,7 @@ namespace pds_solid
   template <int dim>
   void PDSSolid<dim>::create_mesh()
   {
-    double length = 0.01;
+    double length = data.domain_size;
     GridGenerator::hyper_cube_slit(triangulation,
                                    0, length,
                                    /*colorize = */ false);
@@ -149,106 +150,137 @@ namespace pds_solid
 
 
   template <int dim>
+  void PDSSolid<dim>::refine_mesh()
+  {
+    typename Triangulation<2>::active_cell_iterator
+      cell = triangulation.begin_active(),
+      endc = triangulation.end();
+
+    double refined_portion = 0.2;
+    for (; cell != endc; ++cell)
+      if (cell->is_locally_owned())
+        if (
+          std::fabs(cell->face(2)->center()[0]) < data.domain_size*(0.5+refined_portion/2)
+          &&
+          std::fabs(cell->face(2)->center()[0]) > data.domain_size*(0.5-refined_portion/2)
+          &&
+          cell->face(0)->center()[1] > data.domain_size/3
+          )
+          cell->set_refine_flag();
+
+    // triangulation.prepare_coarsening_and_refinement();
+    triangulation.execute_coarsening_and_refinement();
+  }  // eom
+
+
+  template <int dim>
   void PDSSolid<dim>::run()
   {
     create_mesh();
     triangulation.refine_global(data.initial_refinement_level);
+    for (int refinement_cycle = 0;
+         refinement_cycle < data.max_refinement_level - data.initial_refinement_level;
+         refinement_cycle++)
+      refine_mesh();
+
     // read_mesh();
     phase_field_solver.setup_dofs();
 
     // Compute regularization_parameter_epsilon
-    double minimum_mesh_size = (0.01/2)/std::pow(2, data.initial_refinement_level);
+    double minimum_mesh_size = (data.domain_size/2)/std::pow(2, data.max_refinement_level);
     data.regularization_parameter_epsilon = 2*minimum_mesh_size;
-
-    // this vector is used to store solution values for line search
-    TrilinosWrappers::MPI::BlockVector tmp_vector;
-    tmp_vector.reinit(phase_field_solver.solution);
 
     // set initial phase-field to 1
     phase_field_solver.solution.block(1) = 1;
     phase_field_solver.old_solution.block(1) = 1;
 
+    IndexSet old_active_set(phase_field_solver.active_set);
+
     int time_step_number = 0;
     double time_step = 1e-4;
-    double time = 12e-3;
-    double t_max = 1;
+    double old_time_step = time_step;
+    double time = 0;
+    double t_max = 1e-2;
     while(time < t_max)
+    {
+      time += time_step;
+      time_step_number++;
+
+      pcout << std::endl
+            << "Time: "
+            << std::fixed << time
+            << std::endl;
+
+      phase_field_solver.truncate_phase_field();
+      phase_field_solver.update_old_solution();
+
+      double tmp_time_step = time_step;
+
+    redo_time_step:
+      impose_displacement_on_solution(time);
+      std::vector<double> time_steps = {time_step, old_time_step};
+
+      int newton_step = 0;
+      const int max_newton_iter = 20;
+      const double newton_tolerance = 1e-6;
+      while (newton_step < max_newton_iter)
       {
-        pcout << "Time: " << time << std::endl;
-        phase_field_solver.old_old_solution = phase_field_solver.old_solution;
-        phase_field_solver.old_solution = phase_field_solver.solution;
+        pcout << "Newton iteration: " << newton_step << "\t";
 
-        IndexSet old_active_set(phase_field_solver.active_set);
-        impose_displacement_on_solution(time);
+        double error;
+        if (newton_step > 0)
+        {
+          phase_field_solver.
+            compute_nonlinear_residual(phase_field_solver.solution,
+                                       time_steps);
 
-        int newton_step = 0;
-        const int max_newton_iter = 300;
-        const double newton_tolerance = 1e-6;
-        while (newton_step < max_newton_iter)
-          {
-            pcout << "Newton iteration: " << newton_step << "\t";
-            double error;
-            if (newton_step > 0)
-              {
-                phase_field_solver.compute_nonlinear_residual(phase_field_solver.solution);
-                phase_field_solver.compute_active_set(phase_field_solver.solution);
-                pcout << "Size of active set: "
-                      << phase_field_solver.active_set.n_elements()
-                      << "\t";
-                error = phase_field_solver.residual_norm();
-                pcout << "error = " << error << "\t";
+          phase_field_solver.compute_active_set(phase_field_solver.solution);
+          phase_field_solver.all_constraints.set_zero(phase_field_solver.residual);
 
-                // break condition
-                if ((Utilities::MPI::sum(
-                  (phase_field_solver.active_set == old_active_set) ? 0 : 1,
-                   mpi_communicator) == 0)
-                    &&
-                    (error < newton_tolerance))
-                  {
-                    pcout << "Converged!" << std::endl;
-                    break;
-                  }
-                old_active_set = phase_field_solver.active_set;
-              }
+          pcout << "Active set: "
+                << phase_field_solver.active_set.n_elements()
+                << "\t";
+          error = phase_field_solver.residual_norm();
+          pcout << std::scientific << "error = " << error << "\t";
 
-            phase_field_solver.assemble_system();
-            phase_field_solver.solve();
+          // break condition
+          if (phase_field_solver.active_set_changed(old_active_set) &&
+              error < newton_tolerance)
+            {
+              pcout << "Converged!" << std::endl;
+              break;
+            }
+          old_active_set = phase_field_solver.active_set;
+        }
 
-            // backtrace line search
-            // double alpha;
-            // if (newton_step > 0)
-            // {
-            //   for (int i = 0; i < 6; i++)
-            //   {
-            //     alpha = std::pow(0.6, static_cast<double>(i));
-            //     tmp_vector = phase_field_solver.solution;
-            //     tmp_vector.add(alpha, phase_field_solver.solution_update);
-            //     phase_field_solver.compute_nonlinear_residual(tmp_vector);
-                // phase_field_solver.all_constraints.set_zero(phase_field_solver.residual);
-            //     double new_norm = phase_field_solver.residual_norm();
-            //     if (new_norm < error)
-            //       {
-            //         break;
-            //       }
-            //   }
-            //   pcout << "alpha = " << alpha << "\t";
-            //   phase_field_solver.solution = tmp_vector;
-            // }
-            // else
-            //   phase_field_solver.solution += phase_field_solver.solution_update;
+        phase_field_solver.solve_newton_step(time_steps);
 
-            phase_field_solver.solution.add(0.6, phase_field_solver.solution_update);
+        // output_results(newton_step);
+        newton_step++;
 
-            newton_step++;
+        pcout << std::endl;
+      }  // End Newton iter
 
-            pcout << std::endl;
-          }  // End Newton iter
-
-        output_results(time_step_number);
-
+      // cut the time step if no convergence
+      if (newton_step == max_newton_iter)
+      {
+        pcout << "Time step didn't converge: reducing to dt = "
+              << time_step/10 << std::endl;
+        time -= time_step;
+        time_step /= 10.0;
         time += time_step;
-        time_step_number++;
-      }  // end time loop
+        phase_field_solver.solution = phase_field_solver.old_solution;
+        phase_field_solver.use_old_time_step_phi = true;
+        goto redo_time_step;
+      }
+
+      output_results(time_step_number);
+
+      phase_field_solver.use_old_time_step_phi = false;
+
+      old_time_step = time_step;
+      time_step = tmp_time_step;
+    }  // end time loop
   }  // EOM
 
 
@@ -272,6 +304,7 @@ namespace pds_solid
                              data_component_interpretation);
     // add active set
     data_out.add_data_vector(phase_field_solver.active_set, "active_set");
+    // data_out.add_data_vector(phase_field_solver.residual, "residual");
     // Add domain ids
     Vector<float> subdomain(triangulation.n_active_cells());
     for (unsigned int i=0; i<subdomain.size(); ++i)

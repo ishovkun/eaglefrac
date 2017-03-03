@@ -53,19 +53,27 @@ namespace phase_field
     ~PhaseFieldSolver();
 
     void setup_dofs();
-    double compute_nonlinear_residual(const
-      TrilinosWrappers::MPI::BlockVector &linerarization_point);
+    double compute_nonlinear_residual(const TrilinosWrappers::MPI::BlockVector &,
+                                      const std::vector<double> &);
     double residual_norm() const;
-    void assemble_system();
+
+    void assemble_system(const TrilinosWrappers::MPI::BlockVector &,
+                         const std::vector<double> &,
+                         bool assemble_matrix=true);
+
     void compute_active_set(TrilinosWrappers::MPI::BlockVector
                             &linerarization_point);
     void impose_displacement(const std::vector<double> &displacement_values);
     void solve();
+    void solve_newton_step(const std::vector<double> &time_steps);
+    void update_old_solution();
+    bool active_set_changed(const IndexSet &) const;
+    void truncate_phase_field();
 
   private:
     // this function also computes finest mesh size
-    void assemble_mass_matrix_diagonal(TrilinosWrappers::
-                                       BlockSparseMatrix &mass_matrix);
+    void assemble_mass_matrix_diagonal();
+    void setup_preconditioners();
 
   public:
     // variables
@@ -83,18 +91,27 @@ namespace phase_field
     std::vector<IndexSet> owned_partitioning, relevant_partitioning;
     IndexSet locally_owned_dofs;
 
-    TrilinosWrappers::MPI::BlockVector mass_matrix_diagonal;
+    std::vector<std::vector<bool> > constant_modes;  // need for solver
 
-    TrilinosWrappers::BlockSparseMatrix reduced_system_matrix;
+    TrilinosWrappers::MPI::BlockVector mass_matrix_diagonal,
+                                       mass_matrix_diagonal_relevant;
+
+    TrilinosWrappers::BlockSparseMatrix system_matrix;
     TrilinosWrappers::BlockSparseMatrix preconditioner_matrix;
+
+    TrilinosWrappers::PreconditionAMG prec_displacement, prec_phase_field;
+
 
   public:
     double time_step;
     IndexSet active_set;
     TrilinosWrappers::MPI::BlockVector solution, solution_update, residual;
-    TrilinosWrappers::MPI::BlockVector old_solution, old_old_solution;
-    TrilinosWrappers::MPI::BlockVector reduced_rhs_vector;
-    ConstraintMatrix physical_constraints, all_constraints;
+    TrilinosWrappers::MPI::BlockVector old_solution, old_old_solution,
+      relevant_solution;
+    TrilinosWrappers::MPI::BlockVector rhs_vector;
+    ConstraintMatrix physical_constraints, all_constraints, hanging_nodes_constraints;
+    bool use_old_time_step_phi;
+
   };
 
 
@@ -113,7 +130,8 @@ namespace phase_field
     pcout(pcout_),
     computing_timer(computing_timer_),
     fe(FE_Q<dim>(1), dim,  // displacement components
-       FE_Q<dim>(1), 1)    // phase-field
+       FE_Q<dim>(1), 1),    // phase-field
+    use_old_time_step_phi(false)
   {}  // EOM
 
 
@@ -137,6 +155,13 @@ namespace phase_field
     // distribute and renumber dofs
     dof_handler.distribute_dofs(fe);
     DoFRenumbering::component_wise(dof_handler, blocks);
+
+    // Need this stuff for solver
+    FEValuesExtractors::Vector displacement(0);
+    constant_modes.clear();
+    DoFTools::extract_constant_modes(dof_handler,
+                                     fe.component_mask(displacement),
+                                     constant_modes);
 
     // Count dofs per block
     std::vector<types::global_dof_index> dofs_per_block(2);
@@ -174,16 +199,20 @@ namespace phase_field
     }
 
     { // constraints
-      physical_constraints.clear();
-      physical_constraints.reinit(locally_relevant_dofs);
+      hanging_nodes_constraints.clear();
+      hanging_nodes_constraints.reinit(locally_relevant_dofs);
       DoFTools::make_hanging_node_constraints(dof_handler,
-                                              physical_constraints);
+                                              hanging_nodes_constraints);
+      hanging_nodes_constraints.close();
 
       /*
         Impose dirichlet conditions:
         we set the components of those displacements, that are imposed on the
         solution, to zero
       */
+      physical_constraints.clear();
+      physical_constraints.reinit(locally_relevant_dofs);
+      physical_constraints.merge(hanging_nodes_constraints);
       // Extract displacement components
       std::vector<FEValuesExtractors::Scalar> displacement_masks(dim);
       for (int i=0; i<dim; ++i)
@@ -215,7 +244,7 @@ namespace phase_field
     }
 
     { // Setup system matrices and diagonal mass matrix
-      reduced_system_matrix.clear();
+      system_matrix.clear();
 
       /*
       Displacements are coupled with one another (upper-left block = true),
@@ -231,40 +260,30 @@ namespace phase_field
           else
             coupling[c][d] = DoFTools::none;
 
-      BlockDynamicSparsityPattern sp(dofs_per_block, dofs_per_block);
+      // BlockDynamicSparsityPattern sp(dofs_per_block, dofs_per_block);
+      TrilinosWrappers::BlockSparsityPattern sp(owned_partitioning,
+                                                owned_partitioning,
+                                                relevant_partitioning,
+                                                mpi_communicator);
       DoFTools::make_sparsity_pattern(dof_handler, coupling, sp,
                                       physical_constraints,
-                                      /* 	keep_constrained_dofs = */ false);
-      SparsityTools::
-        distribute_sparsity_pattern(sp,
-                                    dof_handler.locally_owned_dofs_per_processor(),
-                                    mpi_communicator,
-                                    locally_relevant_dofs);
-      reduced_system_matrix.reinit(owned_partitioning, sp, mpi_communicator);
+                                      /* 	keep_constrained_dofs = */ false,
+                                      Utilities::MPI::this_mpi_process(mpi_communicator));
+      sp.compress();
+      system_matrix.reinit(sp);
 
-      IndexSet::ElementIterator
-        index = locally_owned_dofs.begin(),
-        end_index = locally_owned_dofs.end();
-
-      // Finally assemble the diagonal of the mass matrix
-      TrilinosWrappers::BlockSparseMatrix mass_matrix;
-      mass_matrix.reinit(sp);
-      assemble_mass_matrix_diagonal(mass_matrix);
-      mass_matrix_diagonal.reinit(owned_partitioning, relevant_partitioning,
-                                  mpi_communicator, /* omit-zeros=*/ true);
-
-      for (; index!=end_index; ++index)
-        mass_matrix_diagonal(*index) = mass_matrix.diag_element(*index);
-
-      mass_matrix_diagonal.compress(VectorOperation::insert);
+      mass_matrix_diagonal.reinit(owned_partitioning);
+      mass_matrix_diagonal_relevant.reinit(relevant_partitioning);
+      assemble_mass_matrix_diagonal();
     }
 
     { // Setup vectors
       solution.reinit(owned_partitioning, mpi_communicator);
-      old_solution.reinit(solution);
-      old_old_solution.reinit(solution);
-      solution_update.reinit(owned_partitioning, relevant_partitioning, mpi_communicator);
-      reduced_rhs_vector.reinit(owned_partitioning, relevant_partitioning,
+      relevant_solution.reinit(relevant_partitioning, mpi_communicator);
+      old_solution.reinit(relevant_partitioning, mpi_communicator);
+      old_old_solution.reinit(relevant_partitioning, mpi_communicator);
+      solution_update.reinit(owned_partitioning, mpi_communicator);
+      rhs_vector.reinit(owned_partitioning, relevant_partitioning,
                                 mpi_communicator, /* omit-zeros=*/ true);
       residual.reinit(solution);
     }
@@ -284,11 +303,16 @@ namespace phase_field
 
 
   template <int dim>
-  void PhaseFieldSolver<dim>::assemble_system()
+  void PhaseFieldSolver<dim>::
+  assemble_system(const TrilinosWrappers::MPI::BlockVector &linerarization_point,
+                  const std::vector<double> &time_steps,
+                  bool assemble_matrix)
   {
     computing_timer.enter_section("Assemble system");
 
-    const QGauss<dim> quadrature_formula(3);
+    AssertThrow(time_steps.size() == 2, ExcMessage("Pass only 2 time steps"));
+
+    const QGauss<dim> quadrature_formula(fe.degree+2);
     FEValues<dim> fe_values(fe, quadrature_formula,
                             update_values | update_gradients |
                             update_quadrature_points |
@@ -309,6 +333,7 @@ namespace phase_field
     std::vector< Tensor<2,dim> > eps_u(dofs_per_cell);
     std::vector< Tensor<1,dim> > grad_xi_phi(dofs_per_cell);
     std::vector< Tensor<1,dim> > grad_phi_values(n_q_points);
+    std::vector<double> xi_phi(dofs_per_cell);
 
     // Solution values containers
     std::vector< SymmetricTensor<2,dim> > strain_tensor_values(n_q_points);
@@ -316,7 +341,6 @@ namespace phase_field
     std::vector<double> phi_values(n_q_points),
                         old_phi_values(n_q_points),
                         old_old_phi_values(n_q_points);
-    std::vector<double> xi_phi(dofs_per_cell);
 
     // Stress decomposition containers
     constitutive_model::EnergySpectralDecomposition<dim> stress_decomposition;
@@ -335,8 +359,15 @@ namespace phase_field
      constitutive_model::isotropic_gassman_tensor<dim>(data.lame_constant,
                                                        data.shear_modulus);
 
-    reduced_system_matrix = 0;
-    reduced_rhs_vector = 0;
+    relevant_solution = linerarization_point;
+
+    if (assemble_matrix)
+    {
+      system_matrix = 0;
+      rhs_vector = 0;
+    }
+    else
+      residual = 0;
 
     typename DoFHandler<dim>::active_cell_iterator
       cell = dof_handler.begin_active(),
@@ -353,13 +384,13 @@ namespace phase_field
           fe_values[displacement].get_function_symmetric_gradients
             (solution, strain_tensor_values);
 
-          fe_values[phase_field].get_function_values(solution,
+          fe_values[phase_field].get_function_values(relevant_solution,
                                                      phi_values);
           fe_values[phase_field].get_function_values(old_solution,
                                                      old_phi_values);
           fe_values[phase_field].get_function_values(old_old_solution,
                                                      old_old_phi_values);
-          fe_values[phase_field].get_function_gradients(solution,
+          fe_values[phase_field].get_function_gradients(relevant_solution,
                                                         grad_phi_values);
 
           for (unsigned int q=0; q<n_q_points; ++q)
@@ -376,18 +407,29 @@ namespace phase_field
               stress_tensor_plus =
                   double_contract<2, 0, 3, 1>(gassman_tensor, strain_tensor_value);
 
-              // TODO: include time into hereouble_contract<2, 0, 3, 1>(gassman_tensor,
-              double d_phi = old_phi_values[q] - old_old_phi_values[q];
-              double phi_tilda = old_phi_values[q] + d_phi;  // extrapolated
-
               double phi_value = phi_values[q];
+              double old_phi_value = old_phi_values[q];
+              double old_old_phi_value = old_old_phi_values[q];
+              double time_step = time_steps[0];
+              double old_time_step = time_steps[1];
+              double dphi_dt_old = (old_phi_value - old_old_phi_value)/old_time_step;
+
+              double phi_tilda = old_phi_value + dphi_dt_old*time_step;
+              phi_tilda = std::max(std::min(1.0, phi_tilda), 0.0);
+
+              if (use_old_time_step_phi)
+                phi_tilda = old_phi_value;
+
               double jxw = fe_values.JxW(q);
 
               for (unsigned int k=0; k<dofs_per_cell; ++k)
                 {
-                  eps_u[k] = fe_values[displacement].symmetric_gradient(k, q);
                   xi_phi[k] = fe_values[phase_field].value(k ,q);
                   grad_xi_phi[k] = fe_values[phase_field].gradient(k, q);
+
+                  if (assemble_matrix)
+                  {
+                    eps_u[k] = fe_values[displacement].symmetric_gradient(k, q);
 
                   // stress_decomposition.get_stress_decomposition_derivatives
                   //   (strain_tensor_value,
@@ -400,7 +442,7 @@ namespace phase_field
                   sigma_u_minus[k] = 0;
                   sigma_u_plus[k] =
                     double_contract<2, 0, 3, 1>(gassman_tensor, eps_u[k]);
-
+                  }
                 }  // end k loop
 
               // Assemble local rhs +
@@ -427,8 +469,9 @@ namespace phase_field
                 }  // end i loop
 
               // Assemble local matrix
-              for (unsigned int i=0; i<dofs_per_cell; ++i)
-                for (unsigned int j=0; j<dofs_per_cell; ++j)
+              if (assemble_matrix)
+                for (unsigned int i=0; i<dofs_per_cell; ++i)
+                  for (unsigned int j=0; j<dofs_per_cell; ++j)
                   {
                     double m_u_u =
                       ((1.-kappa)*phi_tilda*phi_tilda + kappa)
@@ -457,81 +500,83 @@ namespace phase_field
                   }  // end i&j loop
             }  // end q loop
 
-          // pcout << "\n cell matrix = " << std::endl;
-          // for (int i=0; i<dofs_per_cell; ++i)
-          //   {
-          //     for (int j=0; j<dofs_per_cell; ++j)
-          //       pcout << local_matrix(i, j) << "\t";
-          //     pcout << std::endl;
-          //   }
-          // pcout << "\n cell rhs = " << std::endl;
-          // for (int i=0; i<dofs_per_cell; ++i)
-          //   pcout << local_rhs(i) << "\t";
-          // pcout << std::endl;
-
-
           cell->get_dof_indices(local_dof_indices);
-          all_constraints.distribute_local_to_global(local_matrix,
-                                                     local_rhs,
-                                                     local_dof_indices,
-                                                     reduced_system_matrix,
-                                                     reduced_rhs_vector);
+
+          if (assemble_matrix)
+            all_constraints.distribute_local_to_global(local_matrix,
+                                                      local_rhs,
+                                                      local_dof_indices,
+                                                      system_matrix,
+                                                      rhs_vector);
+          else
+            hanging_nodes_constraints.distribute_local_to_global(local_rhs,
+                                                                 local_dof_indices,
+                                                                 residual);
 
         }  // end of cell loop
 
-    reduced_system_matrix.compress(VectorOperation::add);
-    reduced_rhs_vector.compress(VectorOperation::add);
+    if (assemble_matrix)
+      system_matrix.compress(VectorOperation::add);
+
+    rhs_vector.compress(VectorOperation::add);
 
     computing_timer.exit_section();
+
+    if (assemble_matrix)
+      setup_preconditioners();
 
   } // EOM
 
 
   template <int dim>
   void PhaseFieldSolver<dim>::
-  assemble_mass_matrix_diagonal(TrilinosWrappers::
-                                BlockSparseMatrix &mass_matrix)
+  assemble_mass_matrix_diagonal()
   {
-    Assert (fe.degree == 1, ExcNotImplemented());
+    // Assert (fe.degree == 1, ExcNotImplemented());
     computing_timer.enter_section("Assemble mass matrix diagonal");
-    const QTrapez<dim> quadrature_formula;
+
+    // const QTrapez<dim> quadrature_formula;
+    QGaussLobatto<dim> quadrature_formula(fe.degree + 1);
+
     FEValues<dim> fe_values (fe, quadrature_formula,
                              update_quadrature_points |
                              update_values |
                              update_JxW_values);
+
     const unsigned int dofs_per_cell = fe.dofs_per_cell;
     const unsigned int n_q_points = quadrature_formula.size();
-    FullMatrix<double> cell_matrix(dofs_per_cell, dofs_per_cell);
+
+    Vector<double> cell_rhs(dofs_per_cell);
     std::vector<types::global_dof_index> local_dof_indices(dofs_per_cell);
 
     typename DoFHandler<dim>::active_cell_iterator
       cell = dof_handler.begin_active(),
       endc = dof_handler.end();
 
-    mass_matrix = 0;
+    mass_matrix_diagonal = 0;
 
     for (; cell!=endc; ++cell)
       if (cell->is_locally_owned())
         {
           fe_values.reinit(cell);
-          cell_matrix = 0;
+          cell_rhs = 0;
           for (unsigned int q_point=0; q_point<n_q_points; ++q_point)
             for (unsigned int i=0; i<dofs_per_cell; ++i)
-              cell_matrix(i,i) += (fe_values.shape_value(i, q_point) *
-                                   fe_values.shape_value(i, q_point) *
-                                   fe_values.JxW(q_point));
+            {
+              const unsigned int comp_i = fe.system_to_component_index(i).first;
+              if (comp_i == dim)
+              cell_rhs(i) += (fe_values.shape_value(i, q_point) *
+                              fe_values.shape_value(i, q_point) *
+                              fe_values.JxW(q_point));
+            }
+
           cell->get_dof_indices(local_dof_indices);
-          // physical_constraints.distribute_local_to_global(cell_matrix,
-          //                                                 local_dof_indices,
-          //                                                 mass_matrix);
           for (unsigned int i = 0; i < dofs_per_cell; i++)
-            mass_matrix.add(local_dof_indices[i],
-                            local_dof_indices[i],
-                            cell_matrix(i, i));
-          // break;
+            mass_matrix_diagonal(local_dof_indices[i]) += cell_rhs(i);
         }  // end cell loop
 
-    mass_matrix.compress(VectorOperation::add);
+    mass_matrix_diagonal.compress(VectorOperation::add);
+    mass_matrix_diagonal_relevant = mass_matrix_diagonal;
 
     computing_timer.exit_section();
 
@@ -545,178 +590,113 @@ namespace phase_field
     computing_timer.enter_section("Computing active set");
     active_set.clear();
     all_constraints.clear();
+    all_constraints.reinit(locally_owned_dofs);
 
-    // Iterator
-    IndexSet owned_phase_field_dofs = locally_owned_dofs;
-    owned_phase_field_dofs.subtract_set(owned_partitioning[0]);
+    std::vector<bool> dof_touched(dof_handler.n_dofs(), false);
 
-    // IndexSet::ElementIterator
-    //   index = locally_owned_dofs.begin(),
-    //   end_index = locally_owned_dofs.end();
-
-    IndexSet::ElementIterator
-      index = owned_phase_field_dofs.begin(),
-      end_index = owned_phase_field_dofs.end();
-
-    // pcout << "begin: " << *index << std::endl;
-
-    for (; index!=end_index; ++index)
-      {
-        const unsigned int i = *index;
-        if (residual[i]/mass_matrix_diagonal[i] +
-            data.penalty_parameter*(linerarization_point[i] - old_solution[i])
-            > 0)
-          {
-            active_set.add_index(i);
-            all_constraints.add_line(i);
-            all_constraints.set_inhomogeneity(i, 0);
-            residual[i] = 0;
-          }
-          // pcout << "end: " << *index << std::endl;
-      }  // end of dof loop
-      residual.compress(VectorOperation::insert);
-
-    all_constraints.merge(physical_constraints);
-    all_constraints.close();
-    computing_timer.exit_section();
-  }  // EOM
-
-
-  template <int dim>
-  double PhaseFieldSolver<dim>::
-  compute_nonlinear_residual(const TrilinosWrappers::MPI::BlockVector &linerarization_point)
-  {
-    // this is not gonna work because we updated the solution already
-    // return system_matrix.residual(residual, solution_update, rhs_vector);
-
-    computing_timer.enter_section("Computing residual");
-    const QGauss<dim> quadrature_formula(3);
-    FEValues<dim> fe_values(fe, quadrature_formula,
-                            update_values | update_gradients |
-                            update_quadrature_points |
-                            update_JxW_values);
-
-    const unsigned int dofs_per_cell   = fe.dofs_per_cell;
-    const unsigned int n_q_points      = quadrature_formula.size();
-
-    Vector<double>       local_rhs(dofs_per_cell);
-
+    const unsigned int dofs_per_cell = fe.dofs_per_cell;
     std::vector<types::global_dof_index> local_dof_indices(dofs_per_cell);
-
-    const FEValuesExtractors::Vector displacement(0);
-    const FEValuesExtractors::Scalar phase_field(dim);
-
-    // FeValues containers
-    std::vector< Tensor<2,dim> > eps_u(dofs_per_cell);
-    std::vector< Tensor<1,dim> > grad_xi_phi(dofs_per_cell);
-    std::vector< Tensor<1,dim> > grad_phi_values(n_q_points);
-
-    // Solution values containers
-    std::vector< SymmetricTensor<2,dim> > strain_tensor_values(n_q_points);
-    Tensor<2, dim> strain_tensor_value;
-    std::vector<double> phi_values(n_q_points),
-                        old_phi_values(n_q_points),
-                        old_old_phi_values(n_q_points);
-    std::vector<double> xi_phi(dofs_per_cell);
-
-    // Stress decomposition containers
-    constitutive_model::EnergySpectralDecomposition<dim> stress_decomposition;
-    Tensor<2, dim> stress_tensor_plus, stress_tensor_minus;
-
-    // Equation data
-    double kappa = data.regularization_parameter_kappa;
-    double e = data.regularization_parameter_epsilon;
-    double gamma_c = data.energy_release_rate;
-
-    Tensor<4,dim> gassman_tensor =
-     constitutive_model::isotropic_gassman_tensor<dim>(data.lame_constant,
-                                                       data.shear_modulus);
-    residual = 0;
 
     typename DoFHandler<dim>::active_cell_iterator
       cell = dof_handler.begin_active(),
       endc = dof_handler.end();
 
-  for (; cell!=endc; ++cell)
-    if (cell->is_locally_owned())
+    for (; cell != endc; ++cell)
+      if (cell->is_locally_owned())
       {
-        local_rhs = 0;
+        cell->get_dof_indices(local_dof_indices);
+        for (unsigned int i=0; i<dofs_per_cell; ++i)
+        {
+          const int component = fe.system_to_component_index(i).first;
+          const unsigned int index = local_dof_indices[i];
 
-        fe_values.reinit(cell);
-
-        fe_values[displacement].get_function_symmetric_gradients
-          (linerarization_point, strain_tensor_values);
-
-        fe_values[phase_field].get_function_values(linerarization_point,
-                                                   phi_values);
-        fe_values[phase_field].get_function_values(old_solution,
-                                                   old_phi_values);
-        fe_values[phase_field].get_function_values(old_old_solution,
-                                                   old_old_phi_values);
-        fe_values[phase_field].get_function_gradients(linerarization_point,
-                                                      grad_phi_values);
-
-        for (unsigned int q=0; q<n_q_points; ++q)
+          if (component == dim && dof_touched[index] == false)
           {
-            // convert from non-symmetric tensor
-            convert_to_tensor(strain_tensor_values[q], strain_tensor_value);
-            stress_tensor_minus = 0;
-            stress_tensor_plus =
-                  double_contract<2, 0, 3, 1>(gassman_tensor, strain_tensor_value);
+            dof_touched[index] = true;
 
-          // TODO: include time
-          double d_phi = old_phi_values[q] - old_old_phi_values[q];
-          double phi_tilda = old_phi_values[q] + d_phi;  // extrapolated
+            double gap = linerarization_point[index] - old_solution[index];
 
-          double phi_value = phi_values[q];
-          double jxw = fe_values.JxW(q);
-
-          for (unsigned int k=0; k<dofs_per_cell; ++k)
-            {
-              eps_u[k] = fe_values[displacement].symmetric_gradient(k, q);
-              xi_phi[k] = fe_values[phase_field].value(k ,q);
-              grad_xi_phi[k] = fe_values[phase_field].gradient(k, q);
-            }  // end k loop
-
-            // Assemble local rhs +
-            for (unsigned int i=0; i<dofs_per_cell; ++i)
+            if (residual[index]/mass_matrix_diagonal[index] +
+              data.penalty_parameter*(gap)
+              > 0
+              &&
+              !hanging_nodes_constraints.is_constrained(index))
               {
-                double rhs_u =
-                    ((1.-kappa)*phi_tilda*phi_tilda + kappa)
-                      *scalar_product(stress_tensor_plus, eps_u[i])
-                    +
-                    scalar_product(stress_tensor_minus, eps_u[i]);
+                active_set.add_index(index);
+                all_constraints.add_line(index);
+                all_constraints.set_inhomogeneity(index, 0.0);
+                linerarization_point(index) = old_solution(index);
+              }  // end if in active set
+            }  // end if touched
+          }  // end dof loop
+      }  // end cell loop
 
-                  double rhs_phi =
-                    (1.-kappa)*phi_value*xi_phi[i]
-                      *scalar_product(stress_tensor_plus, strain_tensor_value)
-                    -
-                    gamma_c/e*(1-phi_value)*xi_phi[i]
-                    +
-                    gamma_c*e
-                      *scalar_product(grad_phi_values[q], grad_xi_phi[i])
-                    ;
+    linerarization_point.compress(VectorOperation::insert);
+    // we might have changed values of the solution, so fix the
+    // hanging nodes (we ignore in the active set):
+    hanging_nodes_constraints.distribute(linerarization_point);
 
-                  local_rhs[i] -= (rhs_u + rhs_phi)*jxw;
-                }  // end i loop
-            }  // end q loop
+    all_constraints.merge(physical_constraints);
+    all_constraints.close();
 
-          cell->get_dof_indices(local_dof_indices);
-
-          for (unsigned int i=0; i<dofs_per_cell; ++i)
-            residual[local_dof_indices[i]] += local_rhs(i);
-
-      }  // end of cell loop
-
-
-    residual.compress(VectorOperation::add);
-
-    physical_constraints.set_zero(residual);
-
-    double error = residual.l2_norm();
     computing_timer.exit_section();
+  }  // EOM
 
-    return error;
+
+  template <int dim>
+  void PhaseFieldSolver<dim>::update_old_solution()
+  {
+    old_old_solution = old_solution;
+    old_solution = solution;
+  }  // eom
+
+  template <int dim>
+  void PhaseFieldSolver<dim>::solve_newton_step(const std::vector<double> &time_steps)
+  {
+    assemble_system(solution, time_steps, true);
+    solve();
+    // solution.add(0.3, solution_update);
+
+    // line search
+    relevant_solution = solution;  // store solution
+    double old_error = compute_nonlinear_residual(solution, time_steps);
+    const int max_steps = 10;
+    double damping = 0.6;
+    for(int step = 0; step < max_steps; ++step)
+    {
+      solution += solution_update;
+      compute_nonlinear_residual(solution, time_steps);
+      all_constraints.set_zero(residual);
+      double error = residual.l2_norm();
+
+      if (error < old_error)
+        break;
+
+      if (step < max_steps)
+      {
+        solution = relevant_solution;
+        solution_update *= damping;
+      }
+    }  // end line search
+  }  // eom
+
+
+  template <int dim>
+  bool PhaseFieldSolver<dim>::
+  active_set_changed(const IndexSet &old_active_set) const
+  {
+    return Utilities::MPI::sum((active_set == old_active_set) ? 0 : 1,
+                               mpi_communicator) == 0;
+  }  // eom
+
+
+  template <int dim>
+  double PhaseFieldSolver<dim>::
+  compute_nonlinear_residual(const TrilinosWrappers::MPI::BlockVector &linerarization_point,
+                             const std::vector<double> &time_steps)
+  {
+    assemble_system(linerarization_point, time_steps, false);
+    return residual.l2_norm();
   }  // EOM
 
 
@@ -724,6 +704,34 @@ namespace phase_field
   double PhaseFieldSolver<dim>::residual_norm() const
   {
     return residual.l2_norm();
+  }  // eom
+
+
+  template <int dim>
+  void PhaseFieldSolver<dim>::truncate_phase_field()
+  {
+    typename DoFHandler<dim>::active_cell_iterator
+    cell = dof_handler.begin_active(),
+    endc = dof_handler.end();
+
+  std::vector<unsigned int> local_dof_indices(fe.dofs_per_cell);
+
+  for (; cell != endc; ++cell)
+    if (cell->is_locally_owned())
+      {
+        cell->get_dof_indices(local_dof_indices);
+        for (unsigned int i=0; i<fe.dofs_per_cell; ++i)
+        {
+          const unsigned int comp_i = fe.system_to_component_index(i).first;
+          if (comp_i == dim)
+          {
+          const unsigned int idx = local_dof_indices[i];
+          if (dof_handler.locally_owned_dofs().is_element(idx))
+            solution(idx) = std::max(0.0,
+                    std::min(static_cast<double>(solution(idx)), 1.0));
+          }
+        }
+      }
   }  // eom
 
 
@@ -770,8 +778,35 @@ namespace phase_field
 
 
   template <int dim>
-  void PhaseFieldSolver<dim>::
-  solve()
+  void PhaseFieldSolver<dim>::setup_preconditioners()
+  {
+    // Preconditioner for the displacement (0, 0) block
+    // TrilinosWrappers::PreconditionAMG prec_displacement;
+    {
+      TrilinosWrappers::PreconditionAMG::AdditionalData data;
+      data.constant_modes = constant_modes;
+      data.elliptic = true;
+      data.higher_order_elements = true;
+      data.smoother_sweeps = 2;
+      data.aggregation_threshold = 0.02;
+      prec_displacement.initialize(system_matrix.block(0, 0), data);
+    }
+
+    // Preconditioner for the phase-field (1, 1) block
+    // TrilinosWrappers::PreconditionAMG prec_phase_field;
+    {
+      TrilinosWrappers::PreconditionAMG::AdditionalData data;
+      data.elliptic = true;
+      data.higher_order_elements = true;
+      data.smoother_sweeps = 2;
+      data.aggregation_threshold = 0.02;
+      prec_phase_field.initialize(system_matrix.block(1, 1), data);
+    }
+  }  // eom
+
+
+  template <int dim>
+  void PhaseFieldSolver<dim>::solve()
   {
     /*
       In this method we essentially use 2 block diagonal preconditioners
@@ -779,40 +814,30 @@ namespace phase_field
     */
     computing_timer.enter_section("Solve phase-field system");
 
-    // Preconditioner for the displacement (0, 0) block
-    TrilinosWrappers::PreconditionAMG prec_A;
-    {
-      TrilinosWrappers::PreconditionAMG::AdditionalData data;
-      prec_A.initialize(reduced_system_matrix.block(0, 0), data);
-    }
 
-    // Preconditioner for the phase-field (1, 1) block
-    TrilinosWrappers::PreconditionAMG prec_S;
-    {
-      TrilinosWrappers::PreconditionAMG::AdditionalData data;
-      prec_S.initialize(reduced_system_matrix.block(1, 1), data);
-    }
 
     // Construct block preconditioner (for the whole matrix)
     const LinearSolvers::
       BlockDiagonalPreconditioner<TrilinosWrappers::PreconditionAMG,
                                   TrilinosWrappers::PreconditionAMG>
-      preconditioner(prec_A, prec_S);
+    preconditioner(prec_displacement, prec_phase_field);
 
     // set up the linear solver and solve the system
-    unsigned int max_iter = 5*reduced_system_matrix.m();
-    // pcout << "rhs norm" << reduced_rhs_vector.l2_norm() << "\t";
-    double tol = std::max(1e-10*reduced_rhs_vector.l2_norm(), 1e-12);
-    // double tol = 1e-10*reduced_rhs_vector.l2_norm();
+    unsigned int max_iter = 5*system_matrix.m();
+    // pcout << "rhs norm" << rhs_vector.l2_norm() << "\t";
+    // double tol = std::max(1e-10*rhs_vector.l2_norm(), 1e-14);
+    double tol = 1e-10*rhs_vector.l2_norm();
     SolverControl solver_control(max_iter, tol);
 
     // SolverFGMRES<TrilinosWrappers::MPI::BlockVector>
     SolverGMRES<TrilinosWrappers::MPI::BlockVector>
       solver(solver_control);
 
-    all_constraints.set_zero(solution_update);
-    solver.solve(reduced_system_matrix, solution_update,
-                 reduced_rhs_vector, preconditioner);
+    // all_constraints.set_zero(solution_update);
+    // hanging_nodes_constraints.set_zero(solution_update);
+    // hanging_nodes_constraints.set_zero(rhs_vector);
+    solver.solve(system_matrix, solution_update,
+                 rhs_vector, preconditioner);
 
     pcout << "GMRES: " << solver_control.last_step() << "\t";
 

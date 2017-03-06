@@ -27,7 +27,7 @@ namespace pds_solid
     void read_mesh();
     void setup_dofs();
     void impose_displacement_on_solution(double time);
-    void output_results(int time_step_number) const;
+    void output_results(int time_step_number); //const;
     void refine_mesh();
 
     MPI_Comm mpi_communicator;
@@ -238,7 +238,7 @@ namespace pds_solid
           phase_field_solver.all_constraints.set_zero(phase_field_solver.residual);
 
           pcout << "Active set: "
-                << phase_field_solver.active_set.n_elements()
+                << phase_field_solver.active_set_size()
                 << "\t";
           error = phase_field_solver.residual_norm();
           pcout << std::scientific << "error = " << error << "\t";
@@ -285,7 +285,7 @@ namespace pds_solid
 
 
   template <int dim>
-  void PDSSolid<dim>::output_results(int time_step_number) const
+  void PDSSolid<dim>::output_results(int time_step_number) // const
   {
     // Add data vectors to output
     std::vector<std::string> solution_names(dim, "displacement");
@@ -297,8 +297,9 @@ namespace pds_solid
       .push_back(DataComponentInterpretation::component_is_scalar);
 
     DataOut<dim> data_out;
+    phase_field_solver.relevant_solution = phase_field_solver.solution;
     data_out.attach_dof_handler(phase_field_solver.dof_handler);
-    data_out.add_data_vector(phase_field_solver.solution,
+    data_out.add_data_vector(phase_field_solver.relevant_solution,
                              solution_names,
                              DataOut<dim>::type_dof_data,
                              data_component_interpretation);

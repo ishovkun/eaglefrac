@@ -69,6 +69,7 @@ namespace phase_field
     void update_old_solution();
     bool active_set_changed(const IndexSet &) const;
     void truncate_phase_field();
+    unsigned int active_set_size() const;
 
   private:
     // this function also computes finest mesh size
@@ -89,12 +90,13 @@ namespace phase_field
     FESystem<dim> fe;
 
     std::vector<IndexSet> owned_partitioning, relevant_partitioning;
-    IndexSet locally_owned_dofs;
+    IndexSet locally_owned_dofs, locally_relevant_dofs;
 
-    std::vector<std::vector<bool> > constant_modes;  // need for solver
+    std::vector< std::vector<bool> > constant_modes;  // need for solver
 
     TrilinosWrappers::MPI::BlockVector mass_matrix_diagonal,
                                        mass_matrix_diagonal_relevant;
+    TrilinosWrappers::MPI::BlockVector relevant_residual;
 
     TrilinosWrappers::BlockSparseMatrix system_matrix;
     TrilinosWrappers::BlockSparseMatrix preconditioner_matrix;
@@ -181,11 +183,11 @@ namespace phase_field
           << std::endl;
 
     // Partitioning
-    IndexSet locally_relevant_dofs;
     { // compute owned dofs, owned partitioning, and relevant partitioning
       locally_owned_dofs = dof_handler.locally_owned_dofs();
       active_set.set_size(dof_handler.n_locally_owned_dofs());
 
+      owned_partitioning.clear();
       owned_partitioning.resize(2);
       owned_partitioning[0] = locally_owned_dofs.get_view(0, n_u);
       owned_partitioning[1] = locally_owned_dofs.get_view(n_u, n_u+n_phi);
@@ -193,6 +195,7 @@ namespace phase_field
       DoFTools::extract_locally_relevant_dofs(dof_handler,
                                               locally_relevant_dofs);
 
+      relevant_partitioning.clear();
       relevant_partitioning.resize(2);
       relevant_partitioning[0] = locally_relevant_dofs.get_view(0, n_u);
       relevant_partitioning[1] = locally_relevant_dofs.get_view(n_u, n_u+n_phi);
@@ -279,13 +282,18 @@ namespace phase_field
 
     { // Setup vectors
       solution.reinit(owned_partitioning, mpi_communicator);
+      // solution.reinit(relevant_partitioning, mpi_communicator);
       relevant_solution.reinit(relevant_partitioning, mpi_communicator);
       old_solution.reinit(relevant_partitioning, mpi_communicator);
       old_old_solution.reinit(relevant_partitioning, mpi_communicator);
       solution_update.reinit(owned_partitioning, mpi_communicator);
       rhs_vector.reinit(owned_partitioning, relevant_partitioning,
                                 mpi_communicator, /* omit-zeros=*/ true);
-      residual.reinit(solution);
+      residual.reinit(owned_partitioning, mpi_communicator, /* omit-zeros=*/ false);
+      relevant_residual.reinit(relevant_solution);
+
+      active_set.clear();
+      active_set.set_size(dof_handler.n_dofs());
     }
 
     computing_timer.exit_section();
@@ -382,7 +390,7 @@ namespace phase_field
           fe_values.reinit(cell);
 
           fe_values[displacement].get_function_symmetric_gradients
-            (solution, strain_tensor_values);
+            (relevant_solution, strain_tensor_values);
 
           fe_values[phase_field].get_function_values(relevant_solution,
                                                      phi_values);
@@ -519,6 +527,7 @@ namespace phase_field
       system_matrix.compress(VectorOperation::add);
 
     rhs_vector.compress(VectorOperation::add);
+    residual.compress(VectorOperation::add);
 
     computing_timer.exit_section();
 
@@ -576,6 +585,7 @@ namespace phase_field
         }  // end cell loop
 
     mass_matrix_diagonal.compress(VectorOperation::add);
+
     mass_matrix_diagonal_relevant = mass_matrix_diagonal;
 
     computing_timer.exit_section();
@@ -590,12 +600,15 @@ namespace phase_field
     computing_timer.enter_section("Computing active set");
     active_set.clear();
     all_constraints.clear();
-    all_constraints.reinit(locally_owned_dofs);
+    all_constraints.reinit(locally_relevant_dofs);
 
     std::vector<bool> dof_touched(dof_handler.n_dofs(), false);
 
     const unsigned int dofs_per_cell = fe.dofs_per_cell;
     std::vector<types::global_dof_index> local_dof_indices(dofs_per_cell);
+
+    relevant_residual = residual;
+    relevant_solution = linerarization_point;
 
     typename DoFHandler<dim>::active_cell_iterator
       cell = dof_handler.begin_active(),
@@ -610,24 +623,26 @@ namespace phase_field
           const int component = fe.system_to_component_index(i).first;
           const unsigned int index = local_dof_indices[i];
 
-          if (component == dim && dof_touched[index] == false)
-          {
-            dof_touched[index] = true;
+          if (component == dim
+              && dof_touched[index] == false
+              && !hanging_nodes_constraints.is_constrained(index)
+              // && locally_owned_dofs.is_element(index)
+             )
+            {
+              dof_touched[index] = true;
 
-            double gap = linerarization_point[index] - old_solution[index];
+              double gap = relevant_solution[index] - old_solution[index];
+              double res = relevant_residual[index];
+              double mass_diag = mass_matrix_diagonal_relevant[index];
 
-            if (residual[index]/mass_matrix_diagonal[index] +
-              data.penalty_parameter*(gap)
-              > 0
-              &&
-              !hanging_nodes_constraints.is_constrained(index))
-              {
-                active_set.add_index(index);
-                all_constraints.add_line(index);
-                all_constraints.set_inhomogeneity(index, 0.0);
-                linerarization_point(index) = old_solution(index);
-              }  // end if in active set
-            }  // end if touched
+              if (res/mass_diag + data.penalty_parameter*gap > 0 )
+                {
+                  active_set.add_index(index);
+                  all_constraints.add_line(index);
+                  all_constraints.set_inhomogeneity(index, 0.0);
+                  linerarization_point(index) = old_solution(index);
+                }  // end if in active set
+              }  // end if touched
           }  // end dof loop
       }  // end cell loop
 
@@ -658,7 +673,8 @@ namespace phase_field
     // solution.add(0.3, solution_update);
 
     // line search
-    relevant_solution = solution;  // store solution
+    // relevant_solution = solution;  // store solution
+    TrilinosWrappers::MPI::BlockVector tmp_vector = solution;
     double old_error = compute_nonlinear_residual(solution, time_steps);
     const int max_steps = 10;
     double damping = 0.6;
@@ -674,7 +690,8 @@ namespace phase_field
 
       if (step < max_steps)
       {
-        solution = relevant_solution;
+        // solution = relevant_solution;
+        solution = tmp_vector;
         solution_update *= damping;
       }
     }  // end line search
@@ -687,6 +704,14 @@ namespace phase_field
   {
     return Utilities::MPI::sum((active_set == old_active_set) ? 0 : 1,
                                mpi_communicator) == 0;
+  }  // eom
+
+
+  template <int dim>
+  unsigned int PhaseFieldSolver<dim>::active_set_size() const
+  {
+    return Utilities::MPI::sum((active_set & locally_owned_dofs).n_elements(),
+                               mpi_communicator);
   }  // eom
 
 
@@ -732,6 +757,8 @@ namespace phase_field
           }
         }
       }
+
+    solution.compress(VectorOperation::insert);
   }  // eom
 
 
@@ -773,6 +800,7 @@ namespace phase_field
       solution(p->first) = p->second;
 
     solution.compress(VectorOperation::insert);
+
     computing_timer.exit_section();
   }  // EOM
 

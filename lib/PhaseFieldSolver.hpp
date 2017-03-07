@@ -1,19 +1,18 @@
+#pragma once
+
+// base dealii modules
 #include <deal.II/base/utilities.h>
 #include <deal.II/base/quadrature_lib.h>
 #include <deal.II/base/timer.h>
 #include <deal.II/base/function.h>
 #include <deal.II/base/tensor.h>
 
+// Trilinos stuff
 #include <deal.II/lac/generic_linear_algebra.h>
 #include <deal.II/lac/solver_gmres.h>
 #include <deal.II/lac/trilinos_solver.h>
-
 #include <deal.II/lac/trilinos_block_sparse_matrix.h>
 #include <deal.II/lac/trilinos_block_vector.h>
-// #include <deal.II/lac/trilinos_precondition.h>
-
-// #include <deal.II/grid/tria_accessor.h>
-// #include <deal.II/grid/tria_iterator.h>
 
 // DOF stuff
 #include <deal.II/distributed/tria.h>
@@ -22,23 +21,24 @@
 #include <deal.II/dofs/dof_accessor.h>
 #include <deal.II/dofs/dof_tools.h>
 
+// dealii fem modules
 #include <deal.II/fe/fe_values.h>
 #include <deal.II/numerics/vector_tools.h>
 #include <deal.II/fe/fe_system.h>
 #include <deal.II/lac/sparsity_tools.h>
 
+// standard c++ modules
 #include <cmath>        // std:: math functions
 
 // Custom modules
-#include <ConstitutiveModel.cc>
-#include <InputData.cc>
-#include <LinearSolver.cc>
+#include <ConstitutiveModel.hpp>
+#include <InputData.hpp>
+#include <LinearSolver.hpp>
 
 
-namespace phase_field
+namespace PhaseField
 {
   using namespace dealii;
-
 
   template <int dim>
   class PhaseFieldSolver
@@ -53,19 +53,25 @@ namespace phase_field
     ~PhaseFieldSolver();
 
     void setup_dofs();
-    double compute_nonlinear_residual(const TrilinosWrappers::MPI::BlockVector &,
-                                      const std::vector<double> &);
     double residual_norm() const;
 
     void assemble_system(const TrilinosWrappers::MPI::BlockVector &,
-                         const std::vector<double> &,
+                         const std::pair<double,double> &,
                          bool assemble_matrix=true);
+    // more simple assembly function interface
+    void assemble_system(const std::pair<double,double> &);
+
+    double compute_nonlinear_residual(const TrilinosWrappers::MPI::BlockVector &,
+                                      const std::pair<double, double> &);
+    // simplified interface
+    double compute_nonlinear_residual(const std::pair<double, double> &);
 
     void compute_active_set(TrilinosWrappers::MPI::BlockVector
                             &linerarization_point);
+
     void impose_displacement(const std::vector<double> &displacement_values);
     void solve();
-    void solve_newton_step(const std::vector<double> &time_steps);
+    void solve_newton_step(const std::pair<double,double> &time_steps);
     void update_old_solution();
     bool active_set_changed(const IndexSet &) const;
     void truncate_phase_field();
@@ -87,15 +93,15 @@ namespace phase_field
     ConditionalOStream &pcout;
     TimerOutput &computing_timer;
 
-    FESystem<dim> fe;
-
+  public:
     std::vector<IndexSet> owned_partitioning, relevant_partitioning;
+
+  private:
     IndexSet locally_owned_dofs, locally_relevant_dofs;
 
     std::vector< std::vector<bool> > constant_modes;  // need for solver
 
-    TrilinosWrappers::MPI::BlockVector mass_matrix_diagonal,
-                                       mass_matrix_diagonal_relevant;
+    TrilinosWrappers::MPI::BlockVector mass_matrix_diagonal_relevant;
     TrilinosWrappers::MPI::BlockVector relevant_residual;
 
     TrilinosWrappers::BlockSparseMatrix system_matrix;
@@ -105,6 +111,7 @@ namespace phase_field
 
 
   public:
+    FESystem<dim> fe;
     double time_step;
     IndexSet active_set;
     TrilinosWrappers::MPI::BlockVector solution, solution_update, residual;
@@ -275,7 +282,6 @@ namespace phase_field
       sp.compress();
       system_matrix.reinit(sp);
 
-      mass_matrix_diagonal.reinit(owned_partitioning);
       mass_matrix_diagonal_relevant.reinit(relevant_partitioning);
       assemble_mass_matrix_diagonal();
     }
@@ -312,13 +318,24 @@ namespace phase_field
 
   template <int dim>
   void PhaseFieldSolver<dim>::
+  assemble_system(const std::pair<double,double> &time_steps)
+  {
+    assemble_system(solution, time_steps, true);
+  }  // eom
+
+
+  template <int dim>
+  void PhaseFieldSolver<dim>::
   assemble_system(const TrilinosWrappers::MPI::BlockVector &linerarization_point,
-                  const std::vector<double> &time_steps,
+                  const std::pair<double,double> &time_steps,
                   bool assemble_matrix)
   {
-    computing_timer.enter_section("Assemble system");
+    // AssertThrow(time_steps.size() == 2, ExcMessage("Pass only 2 time steps"));
 
-    AssertThrow(time_steps.size() == 2, ExcMessage("Pass only 2 time steps"));
+    if (assemble_matrix)
+      computing_timer.enter_section("Assemble system");
+    else
+      computing_timer.enter_section("Assemble nonlinear residual");
 
     const QGauss<dim> quadrature_formula(fe.degree+2);
     FEValues<dim> fe_values(fe, quadrature_formula,
@@ -351,7 +368,7 @@ namespace phase_field
                         old_old_phi_values(n_q_points);
 
     // Stress decomposition containers
-    constitutive_model::EnergySpectralDecomposition<dim> stress_decomposition;
+    ConstitutiveModel::EnergySpectralDecomposition<dim> stress_decomposition;
     Tensor<2, dim> stress_tensor_plus, stress_tensor_minus;
     std::vector< Tensor<2, dim> >
       sigma_u_plus(dofs_per_cell),
@@ -364,8 +381,8 @@ namespace phase_field
     double gamma_c = data.energy_release_rate;
 
     Tensor<4,dim> gassman_tensor =
-     constitutive_model::isotropic_gassman_tensor<dim>(data.lame_constant,
-                                                       data.shear_modulus);
+     ConstitutiveModel::isotropic_gassman_tensor<dim>(data.lame_constant,
+                                                      data.shear_modulus);
 
     relevant_solution = linerarization_point;
 
@@ -418,8 +435,10 @@ namespace phase_field
               double phi_value = phi_values[q];
               double old_phi_value = old_phi_values[q];
               double old_old_phi_value = old_old_phi_values[q];
-              double time_step = time_steps[0];
-              double old_time_step = time_steps[1];
+              // double time_step = time_steps[0];
+              // double old_time_step = time_steps[1];
+              const double time_step = time_steps.first;
+              const double old_time_step = time_steps.second;
               double dphi_dt_old = (old_phi_value - old_old_phi_value)/old_time_step;
 
               double phi_tilda = old_phi_value + dphi_dt_old*time_step;
@@ -562,6 +581,8 @@ namespace phase_field
       cell = dof_handler.begin_active(),
       endc = dof_handler.end();
 
+    TrilinosWrappers::MPI::BlockVector mass_matrix_diagonal;
+    mass_matrix_diagonal.reinit(owned_partitioning);
     mass_matrix_diagonal = 0;
 
     for (; cell!=endc; ++cell)
@@ -666,7 +687,8 @@ namespace phase_field
   }  // eom
 
   template <int dim>
-  void PhaseFieldSolver<dim>::solve_newton_step(const std::vector<double> &time_steps)
+  void PhaseFieldSolver<dim>::
+  solve_newton_step(const std::pair<double,double> &time_steps)
   {
     assemble_system(solution, time_steps, true);
     solve();
@@ -718,10 +740,18 @@ namespace phase_field
   template <int dim>
   double PhaseFieldSolver<dim>::
   compute_nonlinear_residual(const TrilinosWrappers::MPI::BlockVector &linerarization_point,
-                             const std::vector<double> &time_steps)
+                             const std::pair<double,double> &time_steps)
   {
     assemble_system(linerarization_point, time_steps, false);
     return residual.l2_norm();
+  }  // EOM
+
+
+  template <int dim>
+  double PhaseFieldSolver<dim>::
+  compute_nonlinear_residual(const std::pair<double,double> &time_steps)
+  {
+    return compute_nonlinear_residual(solution, time_steps);
   }  // EOM
 
 

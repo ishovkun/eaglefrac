@@ -1,9 +1,11 @@
+#pragma once
+
 #include <deal.II/fe/fe_values.h>
 #include <deal.II/base/tensor_function.h>
 #include <cmath>        // std::sqrt(double)
 
 
-namespace constitutive_model {
+namespace ConstitutiveModel {
   using namespace dealii;
 
 

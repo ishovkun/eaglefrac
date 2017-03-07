@@ -3,9 +3,11 @@
 
 
 ADD_LIBRARY(lib
-  PhaseFieldSolver.cc
-  InputData.cc
-  LinearSolver.cc
-    )
+  PhaseFieldSolver.hpp
+  InputData.hpp
+  LinearSolver.hpp
+  Postprocessing.hpp
+  Mesher.hpp
+)
 
 DEAL_II_SETUP_TARGET(lib)

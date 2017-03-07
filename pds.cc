@@ -1,11 +1,16 @@
 #include <deal.II/base/utilities.h>
 #include <deal.II/grid/grid_generator.h>
 #include <deal.II/numerics/data_out.h>
-// will probably remove it later
+#include <deal.II/distributed/solution_transfer.h>
 #include <deal.II/grid/grid_in.h>
 
+#include <limits>       // std::numeric_limits
+
 // Custom modules
-#include <PhaseFieldSolver.cc>
+#include <PhaseFieldSolver.hpp>
+#include <Postprocessing.hpp>
+#include <InputData.hpp>
+#include <Mesher.hpp>
 
 
 namespace pds_solid
@@ -29,6 +34,9 @@ namespace pds_solid
     void impose_displacement_on_solution(double time);
     void output_results(int time_step_number); //const;
     void refine_mesh();
+    void execute_postprocessing(const double time);
+    double compute_minimum_mesh_size();
+    void exectute_adaptive_refinement();
 
     MPI_Comm mpi_communicator;
 
@@ -38,7 +46,7 @@ namespace pds_solid
     TimerOutput computing_timer;
 
     input_data::NotchedTestData data;
-    phase_field::PhaseFieldSolver<dim> phase_field_solver;
+    PhaseField::PhaseFieldSolver<dim> phase_field_solver;
   };
 
 
@@ -138,6 +146,26 @@ namespace pds_solid
 
   }  // eom
 
+
+  template <int dim>
+  double PDSSolid<dim>::compute_minimum_mesh_size()
+  {
+    double min_cell_size = std::numeric_limits<double>::max();
+
+    typename Triangulation<2>::active_cell_iterator
+      cell = triangulation.begin_active(),
+      endc = triangulation.end();
+
+    for (; cell != endc; ++cell)
+      if (cell->is_locally_owned())
+        min_cell_size = std::min(cell->diameter(), min_cell_size);
+
+    min_cell_size = -Utilities::MPI::max(-min_cell_size, mpi_communicator);
+    return min_cell_size;
+
+  }  // eom
+
+
   template <int dim>
   void PDSSolid<dim>::impose_displacement_on_solution(double time)
   {
@@ -174,34 +202,72 @@ namespace pds_solid
 
 
   template <int dim>
+  void PDSSolid<dim>::exectute_adaptive_refinement()
+  {
+    phase_field_solver.relevant_solution = phase_field_solver.solution;
+    std::vector<const TrilinosWrappers::MPI::BlockVector *> tmp(3);
+    tmp[0] = &phase_field_solver.relevant_solution;
+    tmp[1] = &phase_field_solver.old_solution;
+    tmp[2] = &phase_field_solver.old_old_solution;
+
+    parallel::distributed::SolutionTransfer<dim, TrilinosWrappers::MPI::BlockVector>
+    solution_transfer(phase_field_solver.dof_handler);
+
+    solution_transfer.prepare_for_coarsening_and_refinement(tmp);
+    triangulation.execute_coarsening_and_refinement();
+
+    phase_field_solver.setup_dofs();
+
+    TrilinosWrappers::MPI::BlockVector
+      tmp_owned1(phase_field_solver.owned_partitioning),
+      tmp_owned2(phase_field_solver.owned_partitioning);
+
+    std::vector<TrilinosWrappers::MPI::BlockVector *> tmp1(3);
+    tmp1[0] = &phase_field_solver.solution;
+    tmp1[1] = &tmp_owned1;
+    tmp1[2] = &tmp_owned2;
+
+    solution_transfer.interpolate(tmp1);
+    phase_field_solver.old_solution = tmp_owned1;
+    phase_field_solver.old_old_solution = tmp_owned2;
+
+  }  // eom
+
+
+  template <int dim>
   void PDSSolid<dim>::run()
   {
     create_mesh();
+
+    // compute_runtime_parameters
+    double minimum_mesh_size = compute_minimum_mesh_size();
+    const int max_refinement_level =
+      data.n_prerefinement_steps
+      + data.initial_refinement_level
+      + 1;
+    minimum_mesh_size /= std::pow(2, max_refinement_level);
+    data.regularization_parameter_epsilon = 3*minimum_mesh_size;
+
+    // local prerefinement
     triangulation.refine_global(data.initial_refinement_level);
     for (int refinement_cycle = 0;
-         refinement_cycle < data.max_refinement_level - data.initial_refinement_level;
+         refinement_cycle < data.n_prerefinement_steps;
          refinement_cycle++)
       refine_mesh();
 
     // read_mesh();
     phase_field_solver.setup_dofs();
 
-    // Compute regularization_parameter_epsilon
-    double minimum_mesh_size = (data.domain_size/2)/std::pow(2, data.max_refinement_level);
-    data.regularization_parameter_epsilon = 2*minimum_mesh_size;
-
     // set initial phase-field to 1
     phase_field_solver.solution.block(1) = 1;
     phase_field_solver.old_solution.block(1) = 1;
 
-    IndexSet old_active_set(phase_field_solver.active_set);
-
-    int time_step_number = 0;
-    double time_step = 1e-4;
+    double time_step = data.initial_time_step;
     double old_time_step = time_step;
+
     double time = 0;
-    double t_max = 1e-2;
-    while(time < t_max)
+    int time_step_number = 0;
+    while(time < data.t_max)
     {
       time += time_step;
       time_step_number++;
@@ -218,11 +284,13 @@ namespace pds_solid
 
     redo_time_step:
       impose_displacement_on_solution(time);
-      std::vector<double> time_steps = {time_step, old_time_step};
+      std::pair<double,double> time_steps = std::make_pair(time_step, old_time_step);
+
+      IndexSet old_active_set(phase_field_solver.active_set);
 
       int newton_step = 0;
-      const int max_newton_iter = 20;
-      const double newton_tolerance = 1e-6;
+      const int max_newton_iter = data.max_newton_iter;
+      const double newton_tolerance = data.newton_tolerance;
       while (newton_step < max_newton_iter)
       {
         pcout << "Newton iteration: " << newton_step << "\t";
@@ -246,12 +314,13 @@ namespace pds_solid
           // break condition
           if (phase_field_solver.active_set_changed(old_active_set) &&
               error < newton_tolerance)
-            {
-              pcout << "Converged!" << std::endl;
-              break;
-            }
+          {
+            pcout << "Converged!" << std::endl;
+            break;
+          }
+
           old_active_set = phase_field_solver.active_set;
-        }
+        }  // end first newton step condition
 
         phase_field_solver.solve_newton_step(time_steps);
 
@@ -274,14 +343,56 @@ namespace pds_solid
         goto redo_time_step;
       }
 
+      // do adaptive refinement if needed
+      if (Mesher::prepare_phase_field_refinement(phase_field_solver,
+                                                 0.2,
+                                                 max_refinement_level))
+      {
+        pcout << std::endl
+             << "Adapting mesh"
+             << std::endl;
+        exectute_adaptive_refinement();
+        goto redo_time_step;
+      }
+
       output_results(time_step_number);
+      execute_postprocessing(time);
 
       phase_field_solver.use_old_time_step_phi = false;
 
       old_time_step = time_step;
       time_step = tmp_time_step;
     }  // end time loop
+
+    pcout << std::fixed;
   }  // EOM
+
+
+  // template <int dim>
+  // void PDSSolid<dim>::prepare_postprocessing(double time)
+  // {
+  //
+  // }  // eom
+
+
+  template <int dim>
+  void PDSSolid<dim>::execute_postprocessing(const double time)
+  {
+    Tensor<1,dim> load = Postprocessing::compute_boundary_load(phase_field_solver,
+                                                               data, 1);
+    double d = data.displacement_boundary_velocities[1]*time;
+
+    if (Utilities::MPI::this_mpi_process(mpi_communicator) == 0)
+    {
+      std::ofstream ff;
+      ff.open("solution/post.txt", std::ios_base::app);
+      ff << time << "\t"
+         << d << "\t"
+         << load[0] << "\t"
+         << load[1] << "\t"
+         << std::endl;
+    }
+  }  // eomj
 
 
   template <int dim>

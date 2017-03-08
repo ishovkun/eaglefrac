@@ -79,72 +79,72 @@ namespace pds_solid
   {
     GridIn<dim> gridin;
 	  gridin.attach_triangulation(triangulation);
-	  std::ifstream f("notched.msh");
+	  std::ifstream f(data.mesh_file_name);
 	  gridin.read_msh(f);
   }
 
-  template <int dim>
-  void PDSSolid<dim>::create_mesh()
-  {
-    double length = data.domain_size;
-    GridGenerator::hyper_cube_slit(triangulation,
-                                   0, length,
-                                   /*colorize = */ false);
-    {// Assign boundary ids
-      // outer domain middle-edge points
-      const Point<dim> top(0, length);
-      const Point<dim> bottom(0, 0);
-      const Point<dim> right(length, 0);
-      const Point<dim> left(0, 0);
-
-      // outer domain boundary id's
-      const int left_boundary_id = 0;
-      const int right_boundary_id = 1;
-      const int bottom_boundary_id = 2;
-      const int top_boundary_id = 3;
-
-      // slit edge id's
-      const int slit_edge1_id = 4;
-      const int slit_edge2_id = 5;
-
-      { // Colorize slit boundaries
-        typename Triangulation<2>::active_cell_iterator
-          cell = triangulation.begin_active();
-
-        cell->face(1)->set_boundary_id(slit_edge1_id);  // left slit edge
-        ++cell;
-        cell->face(0)->set_boundary_id(slit_edge2_id);  // right slit edge
-      }
-
-      typename Triangulation<2>::active_cell_iterator
-        cell = triangulation.begin_active(),
-        endc = triangulation.end();
-
-      for (; cell != endc; ++cell)
-        for (unsigned int face_no = 0;
-             face_no < GeometryInfo<dim>::faces_per_cell;
-             ++face_no)
-          if (cell->face(face_no)->at_boundary())
-            {
-              if (
-                (cell->face(face_no)->boundary_id() != slit_edge1_id)
-                &&
-                (cell->face(face_no)->boundary_id() != slit_edge2_id)
-              )
-              {
-                if (std::fabs(cell->face(face_no)->center()[1] - top[1]) < 1e-12)
-                  cell->face(face_no)->set_boundary_id(top_boundary_id);
-                if (std::fabs(cell->face(face_no)->center()[1] - bottom[1]) < 1e-12)
-                  cell->face(face_no)->set_boundary_id(bottom_boundary_id);
-                if (std::fabs(cell->face(face_no)->center()[0] - left[0]) < 1e-12)
-                  cell->face(face_no)->set_boundary_id(left_boundary_id);
-                if (std::fabs(cell->face(face_no)->center()[0] - right[0]) < 1e-12)
-                  cell->face(face_no)->set_boundary_id(right_boundary_id);
-              }
-            }  // end cell loop
-    } // end assigning boundary id's
-
-  }  // eom
+  // template <int dim>
+  // void PDSSolid<dim>::create_mesh()
+  // {
+  //   double length = data.domain_size;
+  //   GridGenerator::hyper_cube_slit(triangulation,
+  //                                  0, length,
+  //                                  /*colorize = */ false);
+  //   {// Assign boundary ids
+  //     // outer domain middle-edge points
+  //     const Point<dim> top(0, length);
+  //     const Point<dim> bottom(0, 0);
+  //     const Point<dim> right(length, 0);
+  //     const Point<dim> left(0, 0);
+  //
+  //     // outer domain boundary id's
+  //     const int left_boundary_id = 0;
+  //     const int right_boundary_id = 1;
+  //     const int bottom_boundary_id = 2;
+  //     const int top_boundary_id = 3;
+  //
+  //     // slit edge id's
+  //     const int slit_edge1_id = 4;
+  //     const int slit_edge2_id = 5;
+  //
+  //     { // Colorize slit boundaries
+  //       typename Triangulation<2>::active_cell_iterator
+  //         cell = triangulation.begin_active();
+  //
+  //       cell->face(1)->set_boundary_id(slit_edge1_id);  // left slit edge
+  //       ++cell;
+  //       cell->face(0)->set_boundary_id(slit_edge2_id);  // right slit edge
+  //     }
+  //
+  //     typename Triangulation<2>::active_cell_iterator
+  //       cell = triangulation.begin_active(),
+  //       endc = triangulation.end();
+  //
+  //     for (; cell != endc; ++cell)
+  //       for (unsigned int face_no = 0;
+  //            face_no < GeometryInfo<dim>::faces_per_cell;
+  //            ++face_no)
+  //         if (cell->face(face_no)->at_boundary())
+  //           {
+  //             if (
+  //               (cell->face(face_no)->boundary_id() != slit_edge1_id)
+  //               &&
+  //               (cell->face(face_no)->boundary_id() != slit_edge2_id)
+  //             )
+  //             {
+  //               if (std::fabs(cell->face(face_no)->center()[1] - top[1]) < 1e-12)
+  //                 cell->face(face_no)->set_boundary_id(top_boundary_id);
+  //               if (std::fabs(cell->face(face_no)->center()[1] - bottom[1]) < 1e-12)
+  //                 cell->face(face_no)->set_boundary_id(bottom_boundary_id);
+  //               if (std::fabs(cell->face(face_no)->center()[0] - left[0]) < 1e-12)
+  //                 cell->face(face_no)->set_boundary_id(left_boundary_id);
+  //               if (std::fabs(cell->face(face_no)->center()[0] - right[0]) < 1e-12)
+  //                 cell->face(face_no)->set_boundary_id(right_boundary_id);
+  //             }
+  //           }  // end cell loop
+  //   } // end assigning boundary id's
+  //
+  // }  // eom
 
 
   template <int dim>
@@ -237,14 +237,15 @@ namespace pds_solid
   template <int dim>
   void PDSSolid<dim>::run()
   {
-    create_mesh();
+    // create_mesh();
+    read_mesh();
 
     // compute_runtime_parameters
     double minimum_mesh_size = compute_minimum_mesh_size();
     const int max_refinement_level =
       data.n_prerefinement_steps
       + data.initial_refinement_level
-      + 1;
+      + data.n_adaptive_steps;
     minimum_mesh_size /= std::pow(2, max_refinement_level);
     data.regularization_parameter_epsilon = 3*minimum_mesh_size;
 
@@ -272,17 +273,17 @@ namespace pds_solid
       time += time_step;
       time_step_number++;
 
-      pcout << std::endl
-            << "Time: "
-            << std::fixed << time
-            << std::endl;
-
       phase_field_solver.truncate_phase_field();
       phase_field_solver.update_old_solution();
 
       double tmp_time_step = time_step;
 
     redo_time_step:
+      pcout << std::endl
+            << "Time: "
+            << std::fixed << time
+            << std::endl;
+
       impose_displacement_on_solution(time);
       std::pair<double,double> time_steps = std::make_pair(time_step, old_time_step);
 

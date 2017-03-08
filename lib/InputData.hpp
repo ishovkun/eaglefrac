@@ -19,7 +19,9 @@ namespace input_data {
   public:
     // variables
     std::string input_file_name;
-    int initial_refinement_level, n_prerefinement_steps;
+    int initial_refinement_level,
+        n_prerefinement_steps,
+        n_adaptive_steps;
 
   private:
     ParameterHandler prm;
@@ -33,6 +35,7 @@ namespace input_data {
            lame_constant, shear_modulus;
     double penalty_parameter, energy_release_rate;
     double regularization_parameter_epsilon, regularization_parameter_kappa;
+    std::string mesh_file_name;
 
     std::vector<int>    displacement_boundary_labels = {2, 3};
     std::vector<int>    displacement_boundary_components = {1 ,1};
@@ -66,9 +69,13 @@ namespace input_data {
     lame_constant = 121.15*1e3;
     shear_modulus = 80.77*1e3;
 
-    displacement_boundary_labels =     {0, 1, 1};
-    displacement_boundary_components = {0 ,0, 1};
+    // displacement_boundary_labels =     {0, 1, 1};
+    // displacement_boundary_components = {0 ,0, 1};
+    // displacement_boundary_velocities = {0, 1, 0};
+    displacement_boundary_labels =     {2, 3, 3};
+    displacement_boundary_components = {1, 1, 0};
     displacement_boundary_velocities = {0, 1, 0};
+    mesh_file_name = "mesh/notched.msh";
 
     // phase-field control parameters
     penalty_parameter = 10;
@@ -77,7 +84,8 @@ namespace input_data {
 
     // Mesh
     initial_refinement_level = 4;
-    n_prerefinement_steps = 2;
+    n_prerefinement_steps = 0;
+    n_adaptive_steps = 3;
 
     domain_size = 1;
     t_max = 1e-2;

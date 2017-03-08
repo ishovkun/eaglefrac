@@ -9,3 +9,5 @@ lib/liblib.a
 *.msh
 amesos-failure.dat
 solution/*
+debugp*
+debugr*

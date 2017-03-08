@@ -192,6 +192,7 @@ namespace PhaseField
     // Partitioning
     { // compute owned dofs, owned partitioning, and relevant partitioning
       locally_owned_dofs = dof_handler.locally_owned_dofs();
+      active_set.clear();
       active_set.set_size(dof_handler.n_locally_owned_dofs());
 
       owned_partitioning.clear();

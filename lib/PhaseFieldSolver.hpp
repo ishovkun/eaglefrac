@@ -381,9 +381,11 @@ namespace PhaseField
 
     double gamma_c = data.energy_release_rate;
 
-    Tensor<4,dim> gassman_tensor =
-     ConstitutiveModel::isotropic_gassman_tensor<dim>(data.lame_constant,
-                                                      data.shear_modulus);
+    // Tensor<4,dim> gassman_tensor =
+    //  ConstitutiveModel::isotropic_gassman_tensor<dim>(data.lame_constant,
+    //                                                   data.shear_modulus);
+    Tensor<2,dim> identity_tensor =
+      ConstitutiveModel::get_identity_tensor<dim>();
 
     relevant_solution = linerarization_point;
 
@@ -429,9 +431,12 @@ namespace PhaseField
               //                                               data.shear_modulus,
               //                                               stress_tensor_plus,
               //                                               stress_tensor_minus);
-              stress_tensor_minus = 0;
+              // stress_tensor_plus =
+              //     double_contract<2, 0, 3, 1>(gassman_tensor, strain_tensor_value);
               stress_tensor_plus =
-                  double_contract<2, 0, 3, 1>(gassman_tensor, strain_tensor_value);
+                data.lame_constant*trace(strain_tensor_value)*identity_tensor
+                + 2*data.shear_modulus*strain_tensor_value;
+              stress_tensor_minus = 0;
 
               double phi_value = phi_values[q];
               double old_phi_value = old_phi_values[q];
@@ -467,9 +472,13 @@ namespace PhaseField
                   //    sigma_u_plus[k],
                   //    sigma_u_minus[k]);
 
-                  sigma_u_minus[k] = 0;
+                  // sigma_u_plus[k] =
+                  //   double_contract<2, 0, 3, 1>(gassman_tensor, eps_u[k]);
                   sigma_u_plus[k] =
-                    double_contract<2, 0, 3, 1>(gassman_tensor, eps_u[k]);
+                    data.lame_constant*trace(eps_u[k])*identity_tensor
+                    + 2*data.shear_modulus*eps_u[k];
+                  sigma_u_minus[k] = 0;
+
                   }
                 }  // end k loop
 

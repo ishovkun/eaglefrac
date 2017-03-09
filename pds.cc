@@ -79,9 +79,9 @@ namespace pds_solid
     GridIn<dim> gridin;
 	  gridin.attach_triangulation(triangulation);
 	  std::ifstream f(data.mesh_file_name);
-    typename GridIn<dim>::Format format = GridIn<dim>::ucd;
-    gridin.read(f, format);
-	  // gridin.read_msh(f);
+    // typename GridIn<dim>::Format format = GridIn<dim>::ucd;
+    // gridin.read(f, format);
+	  gridin.read_msh(f);
   }
 
   template <int dim>
@@ -231,13 +231,15 @@ namespace pds_solid
     // compute_runtime_parameters
     double minimum_mesh_size = Mesher::compute_minimum_mesh_size(triangulation,
                                                                  mpi_communicator);
-    pcout << "max mesh size " << minimum_mesh_size << std::endl;
     const int max_refinement_level =
         data.n_prerefinement_steps
       + data.initial_refinement_level
       + data.n_adaptive_steps;
     minimum_mesh_size /= std::pow(2, max_refinement_level);
-    data.regularization_parameter_epsilon = 2*minimum_mesh_size;
+
+    pcout << "min mesh size " << minimum_mesh_size << std::endl;
+
+    data.regularization_parameter_epsilon = 4*minimum_mesh_size;
 
     // local prerefinement
     triangulation.refine_global(data.initial_refinement_level);

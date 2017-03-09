@@ -44,6 +44,17 @@ namespace ConstitutiveModel {
       return strain;
     }
 
+  template <int dim>
+  inline Tensor<2,dim>
+  get_identity_tensor()
+  {
+    Tensor<2,dim> identity_tensor;
+    identity_tensor = 0;
+    for (int i=0; i<dim; ++i)
+      identity_tensor[i][i] = 1;
+    return identity_tensor;
+  }
+
 
   template <int dim> inline
   Tensor<4,dim> isotropic_gassman_tensor(double lambda, double mu)

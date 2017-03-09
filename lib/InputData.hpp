@@ -59,7 +59,6 @@ namespace input_data {
     double phi_refinement_value = 0.2;
 
     std::vector<std::string> postprocessing_function_names;
-    int load_boundary_id;
 
   };
 
@@ -82,22 +81,23 @@ namespace input_data {
     displacement_boundary_velocities = {0, 1};
 
     // mesh_file_name = "mesh/notched.msh";
-    // mesh_file_name = "mesh/unit_slit.msh";
-    mesh_file_name = "mesh/unit_slit.inp";
+    mesh_file_name = "mesh/unit_slit.msh";
+    // mesh_file_name = "mesh/unit_slit.inp";
 
     // phase-field control parameters
     penalty_parameter = 10;
     regularization_parameter_kappa = 1e-10;
+    // regularization_parameter_kappa = 0e-10;
     energy_release_rate = 2.7;
-    phi_refinement_value = 0.6;
+    phi_refinement_value = 0.5;
 
     // Mesh
-    initial_refinement_level = 4;
+    initial_refinement_level = 5;
     n_prerefinement_steps = 0;
     n_adaptive_steps = 3;
 
     t_max = 1e-2;
-    initial_time_step = 1e-4;
+    initial_time_step = 1e-5;
 
     // Solver
     max_newton_iter = 20;
@@ -105,7 +105,6 @@ namespace input_data {
 
     // postprocessing
     postprocessing_function_names = {"Load"};
-    load_boundary_id = 1;
   }  // EOM
 
 }  // end of namespace

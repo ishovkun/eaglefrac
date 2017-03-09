@@ -1,6 +1,7 @@
 #pragma once
 
 #include <deal.II/base/tensor.h>
+#include <deal.II/base/function.h>
 
 
 namespace BitMap {
@@ -82,13 +83,20 @@ namespace BitMap {
 
 
   template <int dim>
-  class BitmapFunction : public Function<dim>
+  class BitMapFunction : public Function<dim>
   {
   public:
-    BitmapFunction(const std::string &filename,
-                   double x1_, double x2_, double y1_, double y2_, double minvalue_, double maxvalue_)
-      : Function<dim>(1),
-        f(filename), x1(x1_), x2(x2_), y1(y1_), y2(y2_), minvalue(minvalue_), maxvalue(maxvalue_)
+    BitMapFunction(const std::string &filename,
+                   double x1_, double x2_,
+                   double y1_, double y2_,
+                   double minvalue_, double maxvalue_)
+      :
+      Function<dim>(1),
+      f(filename),
+      x1(x1_), x2(x2_),
+      y1(y1_), y2(y2_),
+      minvalue(minvalue_),
+      maxvalue(maxvalue_)
     {}
 
     virtual

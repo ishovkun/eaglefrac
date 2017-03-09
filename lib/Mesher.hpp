@@ -104,5 +104,36 @@ namespace Mesher {
 
   }  // eom
 
+  template <int dim>
+  void refine_region(parallel::distributed::Triangulation<dim> &triangulation,
+                     const std::vector< std::pair<double,double> > region,
+                     const int n_refinement_cycles=1)
+  {
+    AssertThrow(region.size() == dim, ExcMessage("Dimension mismatch"));
+    Assert(dim==2, ExcNotImplemented());
+
+    for (int cycle=0; cycle<n_refinement_cycles; ++cycle)
+    {
+      typename Triangulation<dim>::active_cell_iterator
+        cell = triangulation.begin_active(),
+        endc = triangulation.end();
+
+      for (; cell != endc; ++cell)
+        if (cell->is_locally_owned())
+          if (
+            cell->face(2)->center()[0] > region[0].first
+            &&
+            cell->face(2)->center()[0] < region[0].second
+            &&
+            cell->face(0)->center()[1] > region[1].first
+            &&
+            cell->face(0)->center()[1] < region[1].second
+            )
+            cell->set_refine_flag();
+
+      triangulation.execute_coarsening_and_refinement();
+    }  // end cycle loop
+
+  }
 
 }  // end of namespace

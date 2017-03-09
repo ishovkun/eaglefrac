@@ -47,7 +47,7 @@ namespace PhaseField
     // methods
     PhaseFieldSolver(MPI_Comm &mpi_communicator,
                      parallel::distributed::Triangulation<dim> &triangulation_,
-                     input_data::PhaseFieldData &data_,
+                     input_data::PhaseFieldData<dim> &data_,
                      ConditionalOStream &pcout_,
                      TimerOutput &computing_timer_);
     ~PhaseFieldSolver();
@@ -86,7 +86,7 @@ namespace PhaseField
     // variables
     MPI_Comm &mpi_communicator;
     parallel::distributed::Triangulation<dim> &triangulation;
-    input_data::PhaseFieldData &data;
+    input_data::PhaseFieldData<dim> &data;
     DoFHandler<dim> dof_handler;
 
   private:
@@ -128,7 +128,7 @@ namespace PhaseField
   PhaseFieldSolver<dim>::PhaseFieldSolver
   (MPI_Comm &mpi_communicator_,
    parallel::distributed::Triangulation<dim> &triangulation_,
-   input_data::PhaseFieldData &data_,
+   input_data::PhaseFieldData<dim> &data_,
    ConditionalOStream &pcout_,
    TimerOutput &computing_timer_)
     :
@@ -379,8 +379,6 @@ namespace PhaseField
     double kappa = data.regularization_parameter_kappa;
     double e = data.regularization_parameter_epsilon;
 
-    double gamma_c = data.energy_release_rate;
-
     // Tensor<4,dim> gassman_tensor =
     //  ConstitutiveModel::isotropic_gassman_tensor<dim>(data.lame_constant,
     //                                                   data.shear_modulus);
@@ -420,6 +418,9 @@ namespace PhaseField
                                                      old_old_phi_values);
           fe_values[phase_field].get_function_gradients(relevant_solution,
                                                         grad_phi_values);
+
+          double G_c = data.get_fracture_toughness->value(cell->center());
+
 
           for (unsigned int q=0; q<n_q_points; ++q)
             {
@@ -495,9 +496,9 @@ namespace PhaseField
                     (1.-kappa)*phi_value*xi_phi[i]
                       *scalar_product(stress_tensor_plus, strain_tensor_value)
                     -
-                    gamma_c/e*(1-phi_value)*xi_phi[i]
+                    G_c/e*(1-phi_value)*xi_phi[i]
                     +
-                    gamma_c*e
+                    G_c*e
                       *scalar_product(grad_phi_values[q], grad_xi_phi[i])
                     ;
 
@@ -527,9 +528,9 @@ namespace PhaseField
                       (1.-kappa)*xi_phi[j]*xi_phi[i]
                         *scalar_product(stress_tensor_plus, strain_tensor_value)
                       +
-                      gamma_c/e*(xi_phi[j]*xi_phi[i])
+                      G_c/e*(xi_phi[j]*xi_phi[i])
                       +
-                      gamma_c*e*scalar_product(grad_xi_phi[j], grad_xi_phi[i])
+                      G_c*e*scalar_product(grad_xi_phi[j], grad_xi_phi[i])
                       ;
 
                     local_matrix(i, j) += (m_u_u + m_phi_u + m_phi_phi) * jxw;
@@ -891,7 +892,7 @@ namespace PhaseField
     preconditioner(prec_displacement, prec_phase_field);
 
     // set up the linear solver and solve the system
-    unsigned int max_iter = 5*system_matrix.m();
+    unsigned int max_iter = system_matrix.m();
     // pcout << "rhs norm" << rhs_vector.l2_norm() << "\t";
     // double tol = std::max(1e-10*rhs_vector.l2_norm(), 1e-14);
     double tol = 1e-10*rhs_vector.l2_norm();

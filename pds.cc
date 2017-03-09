@@ -44,7 +44,7 @@ namespace pds_solid
     ConditionalOStream pcout;
     TimerOutput computing_timer;
 
-    input_data::NotchedTestData data;
+    input_data::NotchedTestData<dim> data;
     PhaseField::PhaseFieldSolver<dim> phase_field_solver;
   };
 
@@ -235,20 +235,18 @@ namespace pds_solid
         data.n_prerefinement_steps
       + data.initial_refinement_level
       + data.n_adaptive_steps;
+
     minimum_mesh_size /= std::pow(2, max_refinement_level);
+    data.compute_mesh_dependent_parameters(minimum_mesh_size);
 
     pcout << "min mesh size " << minimum_mesh_size << std::endl;
 
-    data.regularization_parameter_epsilon = 4*minimum_mesh_size;
-
     // local prerefinement
     triangulation.refine_global(data.initial_refinement_level);
-    for (int refinement_cycle = 0;
-         refinement_cycle < data.n_prerefinement_steps;
-         refinement_cycle++)
-      refine_mesh();
+    Mesher::refine_region(triangulation,
+                          data.local_prerefinement_region,
+                          data.n_prerefinement_steps);
 
-    // read_mesh();
     phase_field_solver.setup_dofs();
 
     // set initial phase-field to 1
@@ -265,7 +263,6 @@ namespace pds_solid
       time += time_step;
       time_step_number++;
 
-      phase_field_solver.truncate_phase_field();
       phase_field_solver.update_old_solution();
 
       double tmp_time_step = time_step;
@@ -347,6 +344,7 @@ namespace pds_solid
         goto redo_time_step;
       }
 
+      phase_field_solver.truncate_phase_field();
       output_results(time_step_number);
       execute_postprocessing(time);
 

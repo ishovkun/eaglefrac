@@ -1,5 +1,6 @@
 #pragma once
 
+#include <deal.II/base/utilities.h>
 // dealii mesh modules
 #include <deal.II/distributed/tria.h>
 #include <deal.II/distributed/grid_refinement.h>
@@ -82,5 +83,26 @@ namespace Mesher {
     }  // end check
 
   }  // eom
+
+  template <int dim>
+  double
+  compute_minimum_mesh_size(parallel::distributed::Triangulation<dim> &triangulation,
+                            MPI_Comm &mpi_communicator)
+  {
+    double min_cell_size = std::numeric_limits<double>::max();
+
+    typename Triangulation<dim>::active_cell_iterator
+      cell = triangulation.begin_active(),
+      endc = triangulation.end();
+
+    for (; cell != endc; ++cell)
+      if (cell->is_locally_owned())
+        min_cell_size = std::min(cell->diameter(), min_cell_size);
+
+    min_cell_size = -Utilities::MPI::max(-min_cell_size, mpi_communicator);
+    return min_cell_size;
+
+  }  // eom
+
 
 }  // end of namespace

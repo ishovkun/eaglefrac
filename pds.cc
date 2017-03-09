@@ -35,7 +35,6 @@ namespace pds_solid
     void output_results(int time_step_number); //const;
     void refine_mesh();
     void execute_postprocessing(const double time);
-    double compute_minimum_mesh_size();
     void exectute_adaptive_refinement();
 
     MPI_Comm mpi_communicator;
@@ -80,88 +79,76 @@ namespace pds_solid
     GridIn<dim> gridin;
 	  gridin.attach_triangulation(triangulation);
 	  std::ifstream f(data.mesh_file_name);
-	  gridin.read_msh(f);
+    typename GridIn<dim>::Format format = GridIn<dim>::ucd;
+    gridin.read(f, format);
+	  // gridin.read_msh(f);
   }
 
-  // template <int dim>
-  // void PDSSolid<dim>::create_mesh()
-  // {
-  //   double length = data.domain_size;
-  //   GridGenerator::hyper_cube_slit(triangulation,
-  //                                  0, length,
-  //                                  /*colorize = */ false);
-  //   {// Assign boundary ids
-  //     // outer domain middle-edge points
-  //     const Point<dim> top(0, length);
-  //     const Point<dim> bottom(0, 0);
-  //     const Point<dim> right(length, 0);
-  //     const Point<dim> left(0, 0);
-  //
-  //     // outer domain boundary id's
-  //     const int left_boundary_id = 0;
-  //     const int right_boundary_id = 1;
-  //     const int bottom_boundary_id = 2;
-  //     const int top_boundary_id = 3;
-  //
-  //     // slit edge id's
-  //     const int slit_edge1_id = 4;
-  //     const int slit_edge2_id = 5;
-  //
-  //     { // Colorize slit boundaries
-  //       typename Triangulation<2>::active_cell_iterator
-  //         cell = triangulation.begin_active();
-  //
-  //       cell->face(1)->set_boundary_id(slit_edge1_id);  // left slit edge
-  //       ++cell;
-  //       cell->face(0)->set_boundary_id(slit_edge2_id);  // right slit edge
-  //     }
-  //
-  //     typename Triangulation<2>::active_cell_iterator
-  //       cell = triangulation.begin_active(),
-  //       endc = triangulation.end();
-  //
-  //     for (; cell != endc; ++cell)
-  //       for (unsigned int face_no = 0;
-  //            face_no < GeometryInfo<dim>::faces_per_cell;
-  //            ++face_no)
-  //         if (cell->face(face_no)->at_boundary())
-  //           {
-  //             if (
-  //               (cell->face(face_no)->boundary_id() != slit_edge1_id)
-  //               &&
-  //               (cell->face(face_no)->boundary_id() != slit_edge2_id)
-  //             )
-  //             {
-  //               if (std::fabs(cell->face(face_no)->center()[1] - top[1]) < 1e-12)
-  //                 cell->face(face_no)->set_boundary_id(top_boundary_id);
-  //               if (std::fabs(cell->face(face_no)->center()[1] - bottom[1]) < 1e-12)
-  //                 cell->face(face_no)->set_boundary_id(bottom_boundary_id);
-  //               if (std::fabs(cell->face(face_no)->center()[0] - left[0]) < 1e-12)
-  //                 cell->face(face_no)->set_boundary_id(left_boundary_id);
-  //               if (std::fabs(cell->face(face_no)->center()[0] - right[0]) < 1e-12)
-  //                 cell->face(face_no)->set_boundary_id(right_boundary_id);
-  //             }
-  //           }  // end cell loop
-  //   } // end assigning boundary id's
-  //
-  // }  // eom
-
-
   template <int dim>
-  double PDSSolid<dim>::compute_minimum_mesh_size()
+  void PDSSolid<dim>::create_mesh()
   {
-    double min_cell_size = std::numeric_limits<double>::max();
+    double domain_size = 1;
+    double length = domain_size;
+    GridGenerator::hyper_cube_slit(triangulation,
+                                   0, length,
+                                   /*colorize = */ false);
+    {// Assign boundary ids
+      // outer domain middle-edge points
+      const Point<dim> top(0, length);
+      const Point<dim> bottom(0, 0);
+      const Point<dim> right(length, 0);
+      const Point<dim> left(0, 0);
 
-    typename Triangulation<2>::active_cell_iterator
-      cell = triangulation.begin_active(),
-      endc = triangulation.end();
+      // outer domain boundary id's
+      const int left_boundary_id = 0;
+      const int right_boundary_id = 1;
+      const int bottom_boundary_id = 2;
+      const int top_boundary_id = 3;
 
-    for (; cell != endc; ++cell)
-      if (cell->is_locally_owned())
-        min_cell_size = std::min(cell->diameter(), min_cell_size);
+      // slit edge id's
+      const int slit_edge1_id = 4;
+      const int slit_edge2_id = 5;
 
-    min_cell_size = -Utilities::MPI::max(-min_cell_size, mpi_communicator);
-    return min_cell_size;
+      { // Colorize slit boundaries
+        typename Triangulation<2>::active_cell_iterator
+          cell = triangulation.begin_active();
+
+        cell->face(1)->set_boundary_id(slit_edge1_id);  // left slit edge
+        ++cell;
+        cell->face(0)->set_boundary_id(slit_edge2_id);  // right slit edge
+      }
+
+      typename Triangulation<2>::active_cell_iterator
+        cell = triangulation.begin_active(),
+        endc = triangulation.end();
+
+      for (; cell != endc; ++cell)
+        for (unsigned int face_no = 0;
+             face_no < GeometryInfo<dim>::faces_per_cell;
+             ++face_no)
+          if (cell->face(face_no)->at_boundary())
+            {
+              if (
+                (cell->face(face_no)->boundary_id() != slit_edge1_id)
+                &&
+                (cell->face(face_no)->boundary_id() != slit_edge2_id)
+              )
+              {
+                if (std::fabs(cell->face(face_no)->center()[1] - top[1]) < 1e-12)
+                  cell->face(face_no)->set_boundary_id(top_boundary_id);
+                if (std::fabs(cell->face(face_no)->center()[1] - bottom[1]) < 1e-12)
+                  cell->face(face_no)->set_boundary_id(bottom_boundary_id);
+                if (std::fabs(cell->face(face_no)->center()[0] - left[0]) < 1e-12)
+                  cell->face(face_no)->set_boundary_id(left_boundary_id);
+                if (std::fabs(cell->face(face_no)->center()[0] - right[0]) < 1e-12)
+                  cell->face(face_no)->set_boundary_id(right_boundary_id);
+              }
+            }  // end cell loop
+    } // end assigning boundary id's
+
+    data.displacement_boundary_labels =     {0, 1, 1};
+    data.displacement_boundary_components = {0 ,0, 1};
+    data.displacement_boundary_velocities = {0, 1, 0};
 
   }  // eom
 
@@ -184,15 +171,16 @@ namespace pds_solid
       cell = triangulation.begin_active(),
       endc = triangulation.end();
 
+    double domain_size = 1;
     double refined_portion = 0.2;
     for (; cell != endc; ++cell)
       if (cell->is_locally_owned())
         if (
-          std::fabs(cell->face(2)->center()[0]) < data.domain_size*(0.5+refined_portion/2)
+          std::fabs(cell->face(2)->center()[0]) < domain_size*(0.5+refined_portion/2)
           &&
-          std::fabs(cell->face(2)->center()[0]) > data.domain_size*(0.5-refined_portion/2)
+          std::fabs(cell->face(2)->center()[0]) > domain_size*(0.5-refined_portion/2)
           &&
-          cell->face(0)->center()[1] > data.domain_size/3
+          cell->face(0)->center()[1] > domain_size/3
           )
           cell->set_refine_flag();
 
@@ -241,13 +229,15 @@ namespace pds_solid
     read_mesh();
 
     // compute_runtime_parameters
-    double minimum_mesh_size = compute_minimum_mesh_size();
+    double minimum_mesh_size = Mesher::compute_minimum_mesh_size(triangulation,
+                                                                 mpi_communicator);
+    pcout << "max mesh size " << minimum_mesh_size << std::endl;
     const int max_refinement_level =
-      data.n_prerefinement_steps
+        data.n_prerefinement_steps
       + data.initial_refinement_level
       + data.n_adaptive_steps;
     minimum_mesh_size /= std::pow(2, max_refinement_level);
-    data.regularization_parameter_epsilon = 3*minimum_mesh_size;
+    data.regularization_parameter_epsilon = 2*minimum_mesh_size;
 
     // local prerefinement
     triangulation.refine_global(data.initial_refinement_level);
@@ -290,9 +280,8 @@ namespace pds_solid
       IndexSet old_active_set(phase_field_solver.active_set);
 
       int newton_step = 0;
-      const int max_newton_iter = data.max_newton_iter;
       const double newton_tolerance = data.newton_tolerance;
-      while (newton_step < max_newton_iter)
+      while (newton_step < data.max_newton_iter)
       {
         pcout << "Newton iteration: " << newton_step << "\t";
 
@@ -332,7 +321,7 @@ namespace pds_solid
       }  // End Newton iter
 
       // cut the time step if no convergence
-      if (newton_step == max_newton_iter)
+      if (newton_step == data.max_newton_iter)
       {
         pcout << "Time step didn't converge: reducing to dt = "
               << time_step/10 << std::endl;
@@ -346,7 +335,7 @@ namespace pds_solid
 
       // do adaptive refinement if needed
       if (Mesher::prepare_phase_field_refinement(phase_field_solver,
-                                                 0.2,
+                                                 data.phi_refinement_value,
                                                  max_refinement_level))
       {
         pcout << std::endl
@@ -363,6 +352,8 @@ namespace pds_solid
 
       old_time_step = time_step;
       time_step = tmp_time_step;
+
+      if (time >= data.t_max) break;
     }  // end time loop
 
     pcout << std::fixed;
@@ -379,8 +370,10 @@ namespace pds_solid
   template <int dim>
   void PDSSolid<dim>::execute_postprocessing(const double time)
   {
+    int boundary_id = data.displacement_boundary_labels[1];
     Tensor<1,dim> load = Postprocessing::compute_boundary_load(phase_field_solver,
-                                                               data, 1);
+                                                               data,
+                                                               boundary_id);
     double d = data.displacement_boundary_velocities[1]*time;
 
     if (Utilities::MPI::this_mpi_process(mpi_communicator) == 0)

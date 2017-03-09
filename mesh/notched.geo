@@ -23,7 +23,6 @@ Plane Surface(16) = {15};
 // Boundary indicators
 Physical Line(0) = {14};     // left
 Physical Line(1) = {9, 12};  // right
-// Physical Line(1) = {9};  // right
 Physical Line(2) = {8};      // bottom
 Physical Line(3) = {13};     // top
 Physical Line(4) = {10};     // notch bottom

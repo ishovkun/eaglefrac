@@ -8,6 +8,7 @@ ADD_LIBRARY(lib
   LinearSolver.hpp
   Postprocessing.hpp
   Mesher.hpp
+  BitMap.hpp
 )
 
 DEAL_II_SETUP_TARGET(lib)

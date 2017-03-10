@@ -225,136 +225,136 @@ namespace pds_solid
   template <int dim>
   void PDSSolid<dim>::run()
   {
-    // create_mesh();
+    data.read_input_file("notched_test.prm");
     read_mesh();
-
-    // compute_runtime_parameters
-    double minimum_mesh_size = Mesher::compute_minimum_mesh_size(triangulation,
-                                                                 mpi_communicator);
-    const int max_refinement_level =
-        data.n_prerefinement_steps
-      + data.initial_refinement_level
-      + data.n_adaptive_steps;
-
-    minimum_mesh_size /= std::pow(2, max_refinement_level);
-    data.compute_mesh_dependent_parameters(minimum_mesh_size);
-
-    pcout << "min mesh size " << minimum_mesh_size << std::endl;
-
-    // local prerefinement
-    triangulation.refine_global(data.initial_refinement_level);
-    Mesher::refine_region(triangulation,
-                          data.local_prerefinement_region,
-                          data.n_prerefinement_steps);
-
-    phase_field_solver.setup_dofs();
-
-    // set initial phase-field to 1
-    phase_field_solver.solution.block(1) = 1;
-    phase_field_solver.old_solution.block(1) = 1;
-
-    double time_step = data.initial_time_step;
-    double old_time_step = time_step;
-
-    double time = 0;
-    int time_step_number = 0;
-    while(time < data.t_max)
-    {
-      time += time_step;
-      time_step_number++;
-
-      phase_field_solver.update_old_solution();
-
-      double tmp_time_step = time_step;
-
-    redo_time_step:
-      pcout << std::endl
-            << "Time: "
-            << std::fixed << time
-            << std::endl;
-
-      impose_displacement_on_solution(time);
-      std::pair<double,double> time_steps = std::make_pair(time_step, old_time_step);
-
-      IndexSet old_active_set(phase_field_solver.active_set);
-
-      int newton_step = 0;
-      const double newton_tolerance = data.newton_tolerance;
-      while (newton_step < data.max_newton_iter)
-      {
-        pcout << "Newton iteration: " << newton_step << "\t";
-
-        double error;
-        if (newton_step > 0)
-        {
-          phase_field_solver.
-            compute_nonlinear_residual(phase_field_solver.solution,
-                                       time_steps);
-
-          phase_field_solver.compute_active_set(phase_field_solver.solution);
-          phase_field_solver.all_constraints.set_zero(phase_field_solver.residual);
-
-          pcout << "Active set: "
-                << phase_field_solver.active_set_size()
-                << "\t";
-          error = phase_field_solver.residual_norm();
-          pcout << std::scientific << "error = " << error << "\t";
-
-          // break condition
-          if (phase_field_solver.active_set_changed(old_active_set) &&
-              error < newton_tolerance)
-          {
-            pcout << "Converged!" << std::endl;
-            break;
-          }
-
-          old_active_set = phase_field_solver.active_set;
-        }  // end first newton step condition
-
-        phase_field_solver.solve_newton_step(time_steps);
-
-        // output_results(newton_step);
-        newton_step++;
-
-        pcout << std::endl;
-      }  // End Newton iter
-
-      // cut the time step if no convergence
-      if (newton_step == data.max_newton_iter)
-      {
-        pcout << "Time step didn't converge: reducing to dt = "
-              << time_step/10 << std::endl;
-        time -= time_step;
-        time_step /= 10.0;
-        time += time_step;
-        phase_field_solver.solution = phase_field_solver.old_solution;
-        phase_field_solver.use_old_time_step_phi = true;
-        goto redo_time_step;
-      }
-
-      // do adaptive refinement if needed
-      if (Mesher::prepare_phase_field_refinement(phase_field_solver,
-                                                 data.phi_refinement_value,
-                                                 max_refinement_level))
-      {
-        pcout << std::endl
-             << "Adapting mesh"
-             << std::endl;
-        exectute_adaptive_refinement();
-        goto redo_time_step;
-      }
-
-      phase_field_solver.truncate_phase_field();
-      output_results(time_step_number);
-      execute_postprocessing(time);
-
-      phase_field_solver.use_old_time_step_phi = false;
-
-      old_time_step = time_step;
-      time_step = tmp_time_step;
-
-      if (time >= data.t_max) break;
-    }  // end time loop
+    //
+    // // compute_runtime_parameters
+    // double minimum_mesh_size = Mesher::compute_minimum_mesh_size(triangulation,
+    //                                                              mpi_communicator);
+    // const int max_refinement_level =
+    //     data.n_prerefinement_steps
+    //   + data.initial_refinement_level
+    //   + data.n_adaptive_steps;
+    //
+    // minimum_mesh_size /= std::pow(2, max_refinement_level);
+    // data.compute_mesh_dependent_parameters(minimum_mesh_size);
+    //
+    // pcout << "min mesh size " << minimum_mesh_size << std::endl;
+    //
+    // // local prerefinement
+    // triangulation.refine_global(data.initial_refinement_level);
+    // Mesher::refine_region(triangulation,
+    //                       data.local_prerefinement_region,
+    //                       data.n_prerefinement_steps);
+    //
+    // phase_field_solver.setup_dofs();
+    //
+    // // set initial phase-field to 1
+    // phase_field_solver.solution.block(1) = 1;
+    // phase_field_solver.old_solution.block(1) = 1;
+    //
+    // double time_step = data.initial_time_step;
+    // double old_time_step = time_step;
+    //
+    // double time = 0;
+    // int time_step_number = 0;
+    // while(time < data.t_max)
+    // {
+    //   time += time_step;
+    //   time_step_number++;
+    //
+    //   phase_field_solver.update_old_solution();
+    //
+    //   double tmp_time_step = time_step;
+    //
+    // redo_time_step:
+    //   pcout << std::endl
+    //         << "Time: "
+    //         << std::fixed << time
+    //         << std::endl;
+    //
+    //   impose_displacement_on_solution(time);
+    //   std::pair<double,double> time_steps = std::make_pair(time_step, old_time_step);
+    //
+    //   IndexSet old_active_set(phase_field_solver.active_set);
+    //
+    //   int newton_step = 0;
+    //   const double newton_tolerance = data.newton_tolerance;
+    //   while (newton_step < data.max_newton_iter)
+    //   {
+    //     pcout << "Newton iteration: " << newton_step << "\t";
+    //
+    //     double error;
+    //     if (newton_step > 0)
+    //     {
+    //       phase_field_solver.
+    //         compute_nonlinear_residual(phase_field_solver.solution,
+    //                                    time_steps);
+    //
+    //       phase_field_solver.compute_active_set(phase_field_solver.solution);
+    //       phase_field_solver.all_constraints.set_zero(phase_field_solver.residual);
+    //
+    //       pcout << "Active set: "
+    //             << phase_field_solver.active_set_size()
+    //             << "\t";
+    //       error = phase_field_solver.residual_norm();
+    //       pcout << std::scientific << "error = " << error << "\t";
+    //
+    //       // break condition
+    //       if (phase_field_solver.active_set_changed(old_active_set) &&
+    //           error < newton_tolerance)
+    //       {
+    //         pcout << "Converged!" << std::endl;
+    //         break;
+    //       }
+    //
+    //       old_active_set = phase_field_solver.active_set;
+    //     }  // end first newton step condition
+    //
+    //     phase_field_solver.solve_newton_step(time_steps);
+    //
+    //     // output_results(newton_step);
+    //     newton_step++;
+    //
+    //     pcout << std::endl;
+    //   }  // End Newton iter
+    //
+    //   // cut the time step if no convergence
+    //   if (newton_step == data.max_newton_iter)
+    //   {
+    //     pcout << "Time step didn't converge: reducing to dt = "
+    //           << time_step/10 << std::endl;
+    //     time -= time_step;
+    //     time_step /= 10.0;
+    //     time += time_step;
+    //     phase_field_solver.solution = phase_field_solver.old_solution;
+    //     phase_field_solver.use_old_time_step_phi = true;
+    //     goto redo_time_step;
+    //   }
+    //
+    //   // do adaptive refinement if needed
+    //   if (Mesher::prepare_phase_field_refinement(phase_field_solver,
+    //                                              data.phi_refinement_value,
+    //                                              max_refinement_level))
+    //   {
+    //     pcout << std::endl
+    //          << "Adapting mesh"
+    //          << std::endl;
+    //     exectute_adaptive_refinement();
+    //     goto redo_time_step;
+    //   }
+    //
+    //   phase_field_solver.truncate_phase_field();
+    //   output_results(time_step_number);
+    //   execute_postprocessing(time);
+    //
+    //   phase_field_solver.use_old_time_step_phi = false;
+    //
+    //   old_time_step = time_step;
+    //   time_step = tmp_time_step;
+    //
+    //   if (time >= data.t_max) break;
+    // }  // end time loop
 
     pcout << std::fixed;
   }  // EOM

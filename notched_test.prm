@@ -1,33 +1,34 @@
 # Listing of Parameters
 # ---------------------
 subsection Boundary conditions
-  set Displacement boundary labels     = 2, 3
-  set Displacement boundary components = 1, 1
-  set Displacement boundary velocities = 0, 1
+  set Displacement boundary labels     = 2, 3, 1
+  set Displacement boundary components = 1, 1, 0
+  set Displacement boundary velocities = 0, 1, 0
   set Displacement points = 
 end
 
 
 subsection Equation data
-  set Bitmap file                = 
-  set Bitmap range               = 
   set Fracture toughness         = 2.7
   set Young modulus              = 210000
   set Poisson ratio              = 0.3
   set Regularization epsilon     = 1, 1
   set Regularization kappa       = 1e-10
+  set Penalization c             = 10
   set Uniform Poisson ratio      = true
   set Uniform Young modulus      = true
   set Uniform fracture toughness = true
+  set Bitmap file                = 
+  set Bitmap range               = 
 end
 
 
 subsection Mesh
-  set Adaptive phi value              = 0.4
-  set Adaptive steps                  = 2
   set Initial global refinement steps = 4
-  set Local refinement region         = 0.4, 0.6, 0.4, 0.6
   set Local refinement steps          = 1
+  set Local refinement region         = 0.4, 0.6, 0.4, 0.6
+  set Adaptive steps                  = 2  
+  set Adaptive phi value              = 0.4
   set Mesh file                       = mesh/unit_slit.msh
 end
 
@@ -37,7 +38,7 @@ subsection Solver
   set Max Newton steps  = 20
   set Minimum time step = 1e-9
   set Newton tolerance  = 1e-9
-  set T max             = 0.1
+  set T max             = 0.01
 end
 
 

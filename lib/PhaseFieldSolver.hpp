@@ -419,7 +419,8 @@ namespace PhaseField
           fe_values[phase_field].get_function_gradients(relevant_solution,
                                                         grad_phi_values);
 
-          double G_c = data.get_fracture_toughness->value(cell->center());
+          double G_c = data.get_fracture_toughness->value(cell->center(), 0);
+          // pcout << "g_c" << G_c << std::endl;
 
 
           for (unsigned int q=0; q<n_q_points; ++q)
@@ -882,8 +883,6 @@ namespace PhaseField
       for the block (0,0) and the block (1, 1)
     */
     computing_timer.enter_section("Solve phase-field system");
-
-
 
     // Construct block preconditioner (for the whole matrix)
     const LinearSolvers::

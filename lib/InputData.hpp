@@ -127,9 +127,7 @@ namespace input_data {
     double t_max, initial_time_step, minimum_time_step;
 
     // Mesh
-    int initial_refinement_level,
-      n_prerefinement_steps,
-      n_adaptive_steps;
+    int initial_refinement_level, n_prerefinement_steps, n_adaptive_steps;
     double phi_refinement_value;
     std::vector<std::pair<double,double>> local_prerefinement_region;
     std::string mesh_file_name;
@@ -157,8 +155,8 @@ namespace input_data {
   {
     declare_parameters();
 
-    this->lame_constant = 121.15*1e3;
-    this->shear_modulus   = 80.77*1e3;
+    // this->lame_constant = 121.15*1e3;
+    // this->shear_modulus   = 80.77*1e3;
 
     // postprocessing
     postprocessing_function_names = {"Load"};
@@ -233,7 +231,7 @@ namespace input_data {
       prm.enter_subsection("Equation data");
       // Constant parameters
       prm.declare_entry("Young modulus", "1e10", Patterns::Double());
-      prm.declare_entry("Poisson ratio", "1e10", Patterns::Double());
+      prm.declare_entry("Poisson ratio", "0.2", Patterns::Double(0, 0.5));
       prm.declare_entry("Fracture toughness", "1e10", Patterns::Double());
       prm.declare_entry("Regularization kappa", "0", Patterns::Double());
       prm.declare_entry("Regularization epsilon", "1, 1",
@@ -323,6 +321,7 @@ void NotchedTestData<dim>::assign_parameters()
     this->poisson_ratio = prm.get_double("Poisson ratio");
     this->regularization_parameter_kappa = prm.get_double("Regularization kappa");
     this->penalty_parameter = prm.get_double("Penalization c");
+    this->fracture_toughness_constant = prm.get_double("Fracture toughness");
     std::vector<double> tmp =
       parse_string_list<double>(prm.get("Regularization epsilon"));
     regularization_epsilon_coefficients.first = tmp[0];

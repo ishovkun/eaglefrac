@@ -2,6 +2,7 @@
 
 #include <deal.II/base/parameter_handler.h>
 #include <boost/algorithm/string.hpp>
+#include <boost/lexical_cast.hpp>
 #include <cstdlib>
 
 // custom modules
@@ -10,22 +11,6 @@
 
 namespace input_data {
   using namespace dealii;
-
-  // template <int dim>
-  // class InputData
-  // {
-  // // public:
-  //   // void read_input_file(std::string &file_name);
-  //
-  // // private:
-  // //   void declare_parameters();
-  //
-  // public:
-  //   // variables
-  //   std::string input_file_name;
-  //
-  // // private:
-  // //   parameterhandler prm;
 
   template<typename T>
   std::vector<T> parse_string_list(std::string list_string,
@@ -37,7 +22,8 @@ namespace input_data {
       std::vector<std::string> strs;
       boost::split(strs, list_string, boost::is_any_of(delimiter));
 
-      for (const auto &string_item : strs){
+      for (const auto &string_item : strs)
+      {
         std::stringstream convert(string_item);
         convert >> item;
         list.push_back(item);
@@ -45,6 +31,27 @@ namespace input_data {
       return list;
     }
 
+  template<>
+  std::vector<bool> parse_string_list(std::string list_string,
+                                      std::string delimiter)
+    {
+      // std::cout << "Parsing bool list" << std::endl;
+      std::vector<bool> list;
+      bool item;
+      if (list_string.size() == 0) return list;
+      std::vector<std::string> strs;
+      boost::split(strs, list_string, boost::is_any_of(delimiter));
+
+      for (auto &string_item : strs)
+      {
+        std::istringstream is(string_item);
+        is >> std::boolalpha >> item;
+        // std::cout << std::endl << string_item << std::endl;
+        // std::cout << item << std::endl;
+        list.push_back(item);
+      }
+      return list;
+    }
 
   template <int dim>
   std::vector< Point<dim> > parse_point_list(const std::string &str)
@@ -120,6 +127,7 @@ namespace input_data {
     std::vector< Point<dim> > displacement_points;
     std::vector<int>          displacement_point_components;
     std::vector<double>       displacement_point_velocities;
+    std::vector<bool>         constraint_point_phase_field;
 
     // Solver
     double newton_tolerance;
@@ -203,12 +211,12 @@ namespace input_data {
   {
     { // Mesh
       prm.enter_subsection("Mesh");
-      prm.declare_entry("Mesh file", "mesh/unit_slit.msh", Patterns::Anything());
+      prm.declare_entry("Mesh file", "", Patterns::Anything());
       prm.declare_entry("Initial global refinement steps", "0", Patterns::Integer(0, 100));
       prm.declare_entry("Local refinement steps", "0", Patterns::Integer(0, 100));
       prm.declare_entry("Adaptive steps", "0", Patterns::Integer(0, 100));
       prm.declare_entry("Adaptive phi value", "0", Patterns::Double(0, 1));
-      prm.declare_entry("Local refinement region", "0, 1, 0, 1",
+      prm.declare_entry("Local refinement region", "",
                         Patterns::List(Patterns::Double()));
       prm.leave_subsection();
     }
@@ -224,7 +232,9 @@ namespace input_data {
       prm.declare_entry("Displacement point components", "",
                     Patterns::List(Patterns::Integer(0, dim-1)));
       prm.declare_entry("Displacement point velocities", "",
-                    Patterns::List(Patterns::Double(0, dim-1)));
+                    Patterns::List(Patterns::Double()));
+      prm.declare_entry("Constraint point phase field", "",
+                        Patterns::List(Patterns::Bool()));
       prm.leave_subsection();
     }
     { // equation data
@@ -309,6 +319,8 @@ void NotchedTestData<dim>::assign_parameters()
       parse_string_list<int>(prm.get("Displacement point components"));
     this->displacement_point_velocities =
       parse_string_list<double>(prm.get("Displacement point velocities"));
+    this->constraint_point_phase_field =
+      parse_string_list<bool>(prm.get("Constraint point phase field"));
     prm.leave_subsection();
   }
   {  // Equation data

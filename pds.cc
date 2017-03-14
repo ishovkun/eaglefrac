@@ -85,108 +85,28 @@ namespace pds_solid
   }
 
   template <int dim>
-  void PDSSolid<dim>::create_mesh()
-  {
-    double domain_size = 1;
-    double length = domain_size;
-    GridGenerator::hyper_cube_slit(triangulation,
-                                   0, length,
-                                   /*colorize = */ false);
-    {// Assign boundary ids
-      // outer domain middle-edge points
-      const Point<dim> top(0, length);
-      const Point<dim> bottom(0, 0);
-      const Point<dim> right(length, 0);
-      const Point<dim> left(0, 0);
-
-      // outer domain boundary id's
-      const int left_boundary_id = 0;
-      const int right_boundary_id = 1;
-      const int bottom_boundary_id = 2;
-      const int top_boundary_id = 3;
-
-      // slit edge id's
-      const int slit_edge1_id = 4;
-      const int slit_edge2_id = 5;
-
-      { // Colorize slit boundaries
-        typename Triangulation<2>::active_cell_iterator
-          cell = triangulation.begin_active();
-
-        cell->face(1)->set_boundary_id(slit_edge1_id);  // left slit edge
-        ++cell;
-        cell->face(0)->set_boundary_id(slit_edge2_id);  // right slit edge
-      }
-
-      typename Triangulation<2>::active_cell_iterator
-        cell = triangulation.begin_active(),
-        endc = triangulation.end();
-
-      for (; cell != endc; ++cell)
-        for (unsigned int face_no = 0;
-             face_no < GeometryInfo<dim>::faces_per_cell;
-             ++face_no)
-          if (cell->face(face_no)->at_boundary())
-            {
-              if (
-                (cell->face(face_no)->boundary_id() != slit_edge1_id)
-                &&
-                (cell->face(face_no)->boundary_id() != slit_edge2_id)
-              )
-              {
-                if (std::fabs(cell->face(face_no)->center()[1] - top[1]) < 1e-12)
-                  cell->face(face_no)->set_boundary_id(top_boundary_id);
-                if (std::fabs(cell->face(face_no)->center()[1] - bottom[1]) < 1e-12)
-                  cell->face(face_no)->set_boundary_id(bottom_boundary_id);
-                if (std::fabs(cell->face(face_no)->center()[0] - left[0]) < 1e-12)
-                  cell->face(face_no)->set_boundary_id(left_boundary_id);
-                if (std::fabs(cell->face(face_no)->center()[0] - right[0]) < 1e-12)
-                  cell->face(face_no)->set_boundary_id(right_boundary_id);
-              }
-            }  // end cell loop
-    } // end assigning boundary id's
-
-    data.displacement_boundary_labels =     {0, 1, 1};
-    data.displacement_boundary_components = {0 ,0, 1};
-    data.displacement_boundary_velocities = {0, 1, 0};
-
-  }  // eom
-
-
-  template <int dim>
   void PDSSolid<dim>::impose_displacement_on_solution(double time)
   {
     int n_displacement_conditions = data.displacement_boundary_labels.size();
     std::vector<double> displacement_values(n_displacement_conditions);
     for (int i=0; i<n_displacement_conditions; ++i)
       displacement_values[i] = data.displacement_boundary_velocities[i]*time;
-    phase_field_solver.impose_displacement(displacement_values);
+
+    int n_displacement_node_conditions = data.displacement_points.size();
+    std::vector<double> displacement_point_values(n_displacement_node_conditions);
+    for (int i=0; i<n_displacement_node_conditions; ++i)
+    {
+      displacement_point_values[i] = data.displacement_point_velocities[i]*time;
+    }
+
+    phase_field_solver.impose_displacement(data.displacement_boundary_labels,
+                                           data.displacement_boundary_components,
+                                           displacement_values,
+                                           data.displacement_points,
+                                           data.displacement_point_components,
+                                           displacement_point_values,
+                                           data.constraint_point_phase_field);
   }  // eom
-
-
-  // template <int dim>
-  // void PDSSolid<dim>::refine_mesh()
-  // {
-  //   typename Triangulation<2>::active_cell_iterator
-  //     cell = triangulation.begin_active(),
-  //     endc = triangulation.end();
-  //
-  //   double domain_size = 1;
-  //   double refined_portion = 0.2;
-  //   for (; cell != endc; ++cell)
-  //     if (cell->is_locally_owned())
-  //       if (
-  //         std::fabs(cell->face(2)->center()[0]) < domain_size*(0.5+refined_portion/2)
-  //         &&
-  //         std::fabs(cell->face(2)->center()[0]) > domain_size*(0.5-refined_portion/2)
-  //         &&
-  //         cell->face(0)->center()[1] > domain_size/3
-  //         )
-  //         cell->set_refine_flag();
-  //
-  //   // triangulation.prepare_coarsening_and_refinement();
-  //   triangulation.execute_coarsening_and_refinement();
-  // }  // eom
 
 
   template <int dim>
@@ -225,8 +145,17 @@ namespace pds_solid
   template <int dim>
   void PDSSolid<dim>::run()
   {
-    data.read_input_file("notched_test.prm");
+    // data.read_input_file("notched_test.prm");
+    data.read_input_file("three-point-bending.prm");
     read_mesh();
+
+    // debug input
+    // pcout << " Yo!" << std::endl;
+    // pcout << data.displacement_point_velocities.size() << std::endl << std::flush;
+    // pcout << data.displacement_point_velocities[0];
+    // for (int i=0; i< data.constraint_point_phase_field.size(); ++i)
+    //   pcout << data.constraint_point_phase_field[i] << std::endl;
+    // return;
 
     // compute_runtime_parameters
     double minimum_mesh_size = Mesher::compute_minimum_mesh_size(triangulation,
@@ -248,19 +177,6 @@ namespace pds_solid
                           data.n_prerefinement_steps);
 
     phase_field_solver.setup_dofs();
-
-    // pcout <<
-    //   data.lame_constant << std::endl <<
-    //   data.shear_modulus << std::endl <<
-    //   data.regularization_parameter_kappa << std::endl <<
-    //   data.regularization_parameter_epsilon << std::endl <<
-    //   data.penalty_parameter << std::endl <<
-    //   data.displacement_boundary_labels[0] << std::endl <<
-    //   data.displacement_boundary_labels[1] << std::endl <<
-    //   data.displacement_boundary_components[0] << std::endl <<
-    //   data.displacement_boundary_components[1] << std::endl <<
-    //   data.displacement_boundary_velocities[0] << std::endl <<
-    //   data.displacement_boundary_velocities[1] << std::endl;
 
     // set initial phase-field to 1
     phase_field_solver.solution.block(1) = 1;
@@ -337,6 +253,8 @@ namespace pds_solid
       {
         pcout << "Time step didn't converge: reducing to dt = "
               << time_step/10 << std::endl;
+        AssertThrow(time_step/10 >= data.minimum_time_step,
+                    ExcMessage("Time step too small! Stop iterations."));
         time -= time_step;
         time_step /= 10.0;
         time += time_step;
@@ -384,21 +302,24 @@ namespace pds_solid
   template <int dim>
   void PDSSolid<dim>::execute_postprocessing(const double time)
   {
-    int boundary_id = data.displacement_boundary_labels[1];
-    Tensor<1,dim> load = Postprocessing::compute_boundary_load(phase_field_solver,
-                                                               data,
-                                                               boundary_id);
-    double d = data.displacement_boundary_velocities[1]*time;
-
-    if (Utilities::MPI::this_mpi_process(mpi_communicator) == 0)
+    if (data.displacement_boundary_labels.size() > 1)
     {
-      std::ofstream ff;
-      ff.open("solution/post.txt", std::ios_base::app);
-      ff << time << "\t"
-         << d << "\t"
-         << load[0] << "\t"
-         << load[1] << "\t"
-         << std::endl;
+      int boundary_id = data.displacement_boundary_labels[1];
+      Tensor<1,dim> load = Postprocessing::compute_boundary_load(phase_field_solver,
+                                                                 data,
+                                                                 boundary_id);
+      double d = data.displacement_boundary_velocities[1]*time;
+
+      if (Utilities::MPI::this_mpi_process(mpi_communicator) == 0)
+      {
+        std::ofstream ff;
+        ff.open("solution/post.txt", std::ios_base::app);
+        ff << time << "\t"
+           << d << "\t"
+           << load[0] << "\t"
+           << load[1] << "\t"
+           << std::endl;
+      }
     }
   }  // eomj
 

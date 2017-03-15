@@ -6,6 +6,7 @@
 #include <deal.II/base/timer.h>
 #include <deal.II/base/function.h>
 #include <deal.II/base/tensor.h>
+#include <deal.II/base/config.h> // for numbers::is_nan
 
 // Trilinos stuff
 #include <deal.II/lac/generic_linear_algebra.h>
@@ -395,8 +396,8 @@ assemble_system(const TrilinosWrappers::MPI::BlockVector &linerarization_point,
   // Tensor<4,dim> gassman_tensor =
   //  ConstitutiveModel::isotropic_gassman_tensor<dim>(data.lame_constant,
   //                                                   data.shear_modulus);
-  Tensor<2,dim> identity_tensor =
-    ConstitutiveModel::get_identity_tensor<dim>();
+  // Tensor<2,dim> identity_tensor =
+  //   ConstitutiveModel::get_identity_tensor<dim>();
 
   relevant_solution = linerarization_point;
 
@@ -434,6 +435,7 @@ assemble_system(const TrilinosWrappers::MPI::BlockVector &linerarization_point,
 
       double G_c = data.get_fracture_toughness->value(cell->center(), 0);
       // pcout << "g_c" << G_c << std::endl;
+      Tensor<2,dim> zero_matrix; zero_matrix.clear();
 
 
       for (unsigned int q=0; q<n_q_points; ++q)
@@ -446,12 +448,29 @@ assemble_system(const TrilinosWrappers::MPI::BlockVector &linerarization_point,
         //                                               data.shear_modulus,
         //                                               stress_tensor_plus,
         //                                               stress_tensor_minus);
+
         // stress_tensor_plus =
         //     double_contract<2, 0, 3, 1>(gassman_tensor, strain_tensor_value);
-        stress_tensor_plus =
-                data.lame_constant*trace(strain_tensor_value)*identity_tensor
-                + 2*data.shear_modulus*strain_tensor_value;
-        stress_tensor_minus = 0;
+
+        // stress_tensor_plus =
+        //         data.lame_constant*trace(strain_tensor_value)*identity_tensor
+        //         + 2*data.shear_modulus*strain_tensor_value;
+        // stress_tensor_minus = 0;
+        ConstitutiveModel::decompose_stress(stress_tensor_plus,
+                                            stress_tensor_minus,
+                                            strain_tensor_value,
+                                            trace(strain_tensor_value),
+                                            zero_matrix, 0.0,
+                                            data.lame_constant,
+                                            data.shear_modulus,
+                                            false);
+
+        if (!numbers::is_finite(stress_tensor_plus[0][0]))
+          stress_decomposition.get_stress_decomposition(strain_tensor_value,
+                                                        data.lame_constant,
+                                                        data.shear_modulus,
+                                                        stress_tensor_plus,
+                                                        stress_tensor_minus);
 
         double phi_value = phi_values[q];
         double old_phi_value = old_phi_values[q];
@@ -489,10 +508,30 @@ assemble_system(const TrilinosWrappers::MPI::BlockVector &linerarization_point,
 
             // sigma_u_plus[k] =
             //   double_contract<2, 0, 3, 1>(gassman_tensor, eps_u[k]);
-            sigma_u_plus[k] =
-                    data.lame_constant*trace(eps_u[k])*identity_tensor
-                    + 2*data.shear_modulus*eps_u[k];
-            sigma_u_minus[k] = 0;
+
+            // sigma_u_plus[k] =
+            //         data.lame_constant*trace(eps_u[k])*identity_tensor
+            //         + 2*data.shear_modulus*eps_u[k];
+            // sigma_u_minus[k] = 0;
+
+            ConstitutiveModel::decompose_stress(sigma_u_plus[k],
+                                                sigma_u_minus[k],
+                                                strain_tensor_value,
+                                                trace(strain_tensor_value),
+                                                eps_u[k], trace(eps_u[k]),
+                                                data.lame_constant,
+                                                data.shear_modulus,
+                                                true);
+            // ConstitutiveModel::print_tensor(sigma_u_plus[k]);
+            if (!numbers::is_finite(sigma_u_plus[k][0][0]))
+            // if (!numbers::is_finite(stress_tensor_plus[0][0]))
+              stress_decomposition.get_stress_decomposition_derivatives
+                (strain_tensor_value,
+                 eps_u[k],
+                 data.lame_constant,
+                 data.shear_modulus,
+                 sigma_u_plus[k],
+                 sigma_u_minus[k]);
 
           }
         } // end k loop

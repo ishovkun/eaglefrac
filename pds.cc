@@ -253,8 +253,8 @@ namespace pds_solid
       {
         pcout << "Time step didn't converge: reducing to dt = "
               << time_step/10 << std::endl;
-        AssertThrow(time_step/10 >= data.minimum_time_step,
-                    ExcMessage("Time step too small! Stop iterations."));
+        if (time_step/10 < data.minimum_time_step)
+          throw SolverControl::NoConvergence(0,0);
         time -= time_step;
         time_step /= 10.0;
         time += time_step;
@@ -280,7 +280,7 @@ namespace pds_solid
       output_results(time_step_number);
       execute_postprocessing(time);
 
-      phase_field_solver.use_old_time_step_phi = false;
+      phase_field_solver.use_old_time_step_phi = true;
 
       old_time_step = time_step;
       time_step = tmp_time_step;

@@ -4,12 +4,12 @@ l_notch = r/5;
 w_notch = l_notch/15;
 
 coarse = r/10;
-fine = w_notch*4;
+fine = w_notch/4;
 
 Point(1) = {-r, 0, 0, coarse};  // left lower
-Point(2) = {-w_notch, 0, 0, fine};  // left notch
+Point(2) = {-w_notch, 0, 0, coarse};  // left notch
 Point(3) = {0, l_notch, 0, 0, fine};  // notch center
-Point(4) = {w_notch, 0, 0, fine};  // right notcjh
+Point(4) = {w_notch, 0, 0, coarse};  // right notcjh
 Point(5) = {r, 0, 0, coarse};  // right lower
 Point(6) = {0, r, 0, coarse};  // top center (point on ellipse)
 Point(7) = {0, 0, 0, fine};   // bottom center (center of ellipse)

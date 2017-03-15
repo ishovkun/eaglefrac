@@ -19,7 +19,7 @@ subsection Equation data
   set Poisson ratio              = 0.3
   set Regularization epsilon     = 2, 1
   set Regularization kappa       = 1e-10
-  set Penalization c             = 1
+  set Penalization c             = 10
   set Uniform Poisson ratio      = true
   set Uniform Young modulus      = true
   set Uniform fracture toughness = true
@@ -39,7 +39,7 @@ end
 
 
 subsection Solver
-  set Initial time step = 1e-4
+  set Initial time step = 1e-5
   set Max Newton steps  = 40
   set Minimum time step = 1e-9
   set Newton tolerance  = 1e-9

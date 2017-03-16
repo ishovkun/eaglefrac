@@ -119,7 +119,7 @@ namespace pds_solid
     tmp[2] = &phase_field_solver.old_old_solution;
 
     parallel::distributed::SolutionTransfer<dim, TrilinosWrappers::MPI::BlockVector>
-    solution_transfer(phase_field_solver.dof_handler);
+        solution_transfer(phase_field_solver.dof_handler);
 
     solution_transfer.prepare_for_coarsening_and_refinement(tmp);
     triangulation.execute_coarsening_and_refinement();
@@ -127,8 +127,8 @@ namespace pds_solid
     phase_field_solver.setup_dofs();
 
     TrilinosWrappers::MPI::BlockVector
-      tmp_owned1(phase_field_solver.owned_partitioning),
-      tmp_owned2(phase_field_solver.owned_partitioning);
+      tmp_owned1(phase_field_solver.owned_partitioning, mpi_communicator),
+      tmp_owned2(phase_field_solver.owned_partitioning, mpi_communicator);
 
     std::vector<TrilinosWrappers::MPI::BlockVector *> tmp1(3);
     tmp1[0] = &phase_field_solver.solution;
@@ -228,6 +228,7 @@ namespace pds_solid
                 << "\t";
           error = phase_field_solver.residual_norm();
           pcout << std::scientific << "error = " << error << "\t";
+          std::cout.unsetf(std::ios_base::scientific);
 
           // break condition
           if (phase_field_solver.active_set_changed(old_active_set) &&
@@ -255,7 +256,12 @@ namespace pds_solid
         pcout << "Time step didn't converge: reducing to dt = "
               << time_step/10 << std::endl;
         if (time_step/10 < data.minimum_time_step)
-          throw SolverControl::NoConvergence(0,0);
+        {
+          pcout << "Time step too small: aborting" << std::endl;
+          std::cout.unsetf(std::ios_base::scientific);
+          throw SolverControl::NoConvergence(0, 0);
+        }
+
         time -= time_step;
         time_step /= 10.0;
         time += time_step;
@@ -289,7 +295,9 @@ namespace pds_solid
       if (time >= data.t_max) break;
     }  // end time loop
 
-    pcout << std::fixed;
+    // pcout << std::fixed;
+    // show timer table in default format
+    std::cout.unsetf(std::ios_base::scientific);
   }  // EOM
 
 

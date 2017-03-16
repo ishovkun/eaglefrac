@@ -222,98 +222,71 @@ void PhaseFieldSolver<dim>::setup_dofs()
   }
 
   { // constraints
-          hanging_nodes_constraints.clear();
-          hanging_nodes_constraints.reinit(locally_relevant_dofs);
-          DoFTools::make_hanging_node_constraints(dof_handler,
-                                                  hanging_nodes_constraints);
-          hanging_nodes_constraints.close();
+    hanging_nodes_constraints.clear();
+    hanging_nodes_constraints.reinit(locally_relevant_dofs);
+    DoFTools::make_hanging_node_constraints(dof_handler,
+                                            hanging_nodes_constraints);
+    hanging_nodes_constraints.close();
 
-          /*
-             Impose dirichlet conditions:
-             we set the components of those displacements, that are imposed on the
-             solution, to zero
-           */
-          // physical_constraints.clear();
-          // physical_constraints.reinit(locally_relevant_dofs);
-          // physical_constraints.merge(hanging_nodes_constraints);
-          // // Extract displacement components
-          // std::vector<FEValuesExtractors::Scalar> displacement_masks(dim);
-          // for (int i=0; i<dim; ++i)
-          // {
-          //         const FEValuesExtractors::Scalar comp(i);
-          //         displacement_masks[i] = comp;
-          // }
-          //
-          // int n_dirichlet_conditions = data.displacement_boundary_labels.size();
-          //
-          // // Insert values into the constraints matrix
-          // for (int cond=0; cond<n_dirichlet_conditions; ++cond)
-          // {
-          //         int component = data.displacement_boundary_components[cond];
-          //         VectorTools::interpolate_boundary_values
-          //                 (dof_handler,
-          //                 data.displacement_boundary_labels[cond],
-          //                 ZeroFunction<dim>(dim+1),
-          //                 physical_constraints,
-          //                 fe.component_mask(displacement_masks[component]));
-          // } // end loop over dirichlet conditions
-          //
-          // physical_constraints.close();
-          //
-          // all_constraints.clear();
-          // all_constraints.reinit(locally_relevant_dofs);
-          // all_constraints.merge(physical_constraints);
-          // all_constraints.close();
+    physical_constraints.clear();
+    physical_constraints.reinit(locally_relevant_dofs);
+    physical_constraints.merge(hanging_nodes_constraints);
+    physical_constraints.close();
+
+    all_constraints.clear();
+    all_constraints.reinit(locally_relevant_dofs);
+    all_constraints.merge(physical_constraints);
+    all_constraints.close();
   }
 
   { // Setup system matrices and diagonal mass matrix
-          system_matrix.clear();
+    system_matrix.clear();
 
-          /*
-             Displacements are coupled with one another (upper-left block = true),
-             displacements are coupled with phase-field (lower-left block = true),
-             phase-field is not coupled with displacements (upper-right block = false),
-             phase-field is coupled with itself (lower-right block = true)
-           */
-          Table<2,DoFTools::Coupling> coupling(dim+1, dim+1);
-          for (unsigned int c=0; c<dim+1; ++c)
-                  for (unsigned int d=0; d<dim+1; ++d)
-                          if ( (c<=dim && d<dim) || (c==dim && d==dim) )
-                                  coupling[c][d] = DoFTools::always;
-                          else
-                                  coupling[c][d] = DoFTools::none;
+    /*
+       Displacements are coupled with one another (upper-left block = true),
+       displacements are coupled with phase-field (lower-left block = true),
+       phase-field is not coupled with displacements (upper-right block = false),
+       phase-field is coupled with itself (lower-right block = true)
+     */
+    Table<2,DoFTools::Coupling> coupling(dim+1, dim+1);
+    for (unsigned int c=0; c<dim+1; ++c)
+            for (unsigned int d=0; d<dim+1; ++d)
+                    if ( (c<=dim && d<dim) || (c==dim && d==dim) )
+                            coupling[c][d] = DoFTools::always;
+                    else
+                            coupling[c][d] = DoFTools::none;
 
-          // BlockDynamicSparsityPattern sp(dofs_per_block, dofs_per_block);
-          TrilinosWrappers::BlockSparsityPattern sp(owned_partitioning,
-                                                    owned_partitioning,
-                                                    relevant_partitioning,
-                                                    mpi_communicator);
-          DoFTools::make_sparsity_pattern(dof_handler, coupling, sp,
-                                          // physical_constraints,
-                                          hanging_nodes_constraints,
-                                          /*  keep_constrained_dofs = */ false,
-                                          Utilities::MPI::this_mpi_process(mpi_communicator));
-          sp.compress();
-          system_matrix.reinit(sp);
+    // BlockDynamicSparsityPattern sp(dofs_per_block, dofs_per_block);
+    TrilinosWrappers::BlockSparsityPattern sp(owned_partitioning,
+                                              owned_partitioning,
+                                              relevant_partitioning,
+                                              mpi_communicator);
+    DoFTools::make_sparsity_pattern(dof_handler, coupling, sp,
+                                    // physical_constraints,
+                                    hanging_nodes_constraints,
+                                    /*  keep_constrained_dofs = */ false,
+                                    Utilities::MPI::this_mpi_process(mpi_communicator));
+    sp.compress();
+    system_matrix.reinit(sp);
 
-          mass_matrix_diagonal_relevant.reinit(relevant_partitioning);
-          assemble_mass_matrix_diagonal();
+    mass_matrix_diagonal_relevant.reinit(relevant_partitioning);
+    assemble_mass_matrix_diagonal();
   }
 
   { // Setup vectors
-          solution.reinit(owned_partitioning, mpi_communicator);
-          // solution.reinit(relevant_partitioning, mpi_communicator);
-          relevant_solution.reinit(relevant_partitioning, mpi_communicator);
-          old_solution.reinit(relevant_partitioning, mpi_communicator);
-          old_old_solution.reinit(relevant_partitioning, mpi_communicator);
-          solution_update.reinit(owned_partitioning, mpi_communicator);
-          rhs_vector.reinit(owned_partitioning, relevant_partitioning,
-                            mpi_communicator, /* omit-zeros=*/ true);
-          residual.reinit(owned_partitioning, mpi_communicator, /* omit-zeros=*/ false);
-          relevant_residual.reinit(relevant_solution);
+    solution.reinit(owned_partitioning, mpi_communicator);
+    // solution.reinit(relevant_partitioning, mpi_communicator);
+    relevant_solution.reinit(relevant_partitioning, mpi_communicator);
+    old_solution.reinit(relevant_partitioning, mpi_communicator);
+    old_old_solution.reinit(relevant_partitioning, mpi_communicator);
+    solution_update.reinit(owned_partitioning, mpi_communicator);
+    rhs_vector.reinit(owned_partitioning, relevant_partitioning,
+                      mpi_communicator, /* omit-zeros=*/ true);
+    residual.reinit(owned_partitioning, mpi_communicator, /* omit-zeros=*/ false);
+    relevant_residual.reinit(relevant_solution);
 
-          active_set.clear();
-          active_set.set_size(dof_handler.n_dofs());
+    active_set.clear();
+    active_set.set_size(dof_handler.n_dofs());
   }
 
   computing_timer.exit_section();
@@ -347,9 +320,9 @@ assemble_system(const TrilinosWrappers::MPI::BlockVector &linerarization_point,
   // AssertThrow(time_steps.size() == 2, ExcMessage("Pass only 2 time steps"));
 
   if (assemble_matrix)
-          computing_timer.enter_section("Assemble system");
+    computing_timer.enter_section("Assemble system");
   else
-          computing_timer.enter_section("Assemble nonlinear residual");
+    computing_timer.enter_section("Assemble nonlinear residual");
 
   const QGauss<dim> quadrature_formula(fe.degree+2);
   FEValues<dim> fe_values(fe, quadrature_formula,
@@ -357,8 +330,8 @@ assemble_system(const TrilinosWrappers::MPI::BlockVector &linerarization_point,
                           update_quadrature_points |
                           update_JxW_values);
 
-  const unsigned int dofs_per_cell   = fe.dofs_per_cell;
-  const unsigned int n_q_points      = quadrature_formula.size();
+  const unsigned int dofs_per_cell = fe.dofs_per_cell;
+  const unsigned int n_q_points    = quadrature_formula.size();
 
   FullMatrix<double>   local_matrix(dofs_per_cell, dofs_per_cell);
   Vector<double>       local_rhs(dofs_per_cell);
@@ -408,8 +381,8 @@ assemble_system(const TrilinosWrappers::MPI::BlockVector &linerarization_point,
 
   for (; cell!=endc; ++cell)
     if (cell->is_locally_owned())
-  {
-    local_rhs = 0;
+    {
+      local_rhs = 0;
       local_matrix = 0;
 
       fe_values.reinit(cell);
@@ -428,8 +401,6 @@ assemble_system(const TrilinosWrappers::MPI::BlockVector &linerarization_point,
 
       double G_c = data.get_fracture_toughness->value(cell->center(), 0);
       // pcout << "g_c" << G_c << std::endl;
-      Tensor<2,dim> zero_matrix; zero_matrix.clear();
-
 
       for (unsigned int q=0; q<n_q_points; ++q)
       {
@@ -469,7 +440,7 @@ assemble_system(const TrilinosWrappers::MPI::BlockVector &linerarization_point,
         phi_tilda = std::max(std::min(1.0, phi_tilda), 0.0);
 
         if (use_old_time_step_phi)
-                phi_tilda = old_phi_value;
+          phi_tilda = old_phi_value;
 
         double jxw = fe_values.JxW(q);
 
@@ -497,7 +468,7 @@ assemble_system(const TrilinosWrappers::MPI::BlockVector &linerarization_point,
                sigma_u_plus[k],
                sigma_u_minus[k]);
 
-             // we get nans at the first time step
+            // we get nans at the first time step
             // simple splitting
             if (!numbers::is_finite(trace(sigma_u_plus[k])))
               stress_decomposition.get_stress_decomposition_derivatives
@@ -516,20 +487,17 @@ assemble_system(const TrilinosWrappers::MPI::BlockVector &linerarization_point,
         {
           double rhs_u =
                   ((1.-kappa)*phi_tilda*phi_tilda + kappa)
-                  *scalar_product(stress_tensor_plus, eps_u[i])
-                  +
-                  scalar_product(stress_tensor_minus, eps_u[i]);
+                    *scalar_product(stress_tensor_plus, eps_u[i])
+                  + scalar_product(stress_tensor_minus, eps_u[i]);
 
           double rhs_phi =
                   (1.-kappa)*phi_value*xi_phi[i]
                   *scalar_product(stress_tensor_plus, strain_tensor_value)
-                  -
-                  G_c/e*(1-phi_value)*xi_phi[i]
-                  +
-                  G_c*e
-                  *scalar_product(grad_phi_values[q], grad_xi_phi[i]);
+                  - G_c/e*(1-phi_value)*xi_phi[i]
+                  + G_c*e
+                    *scalar_product(grad_phi_values[q], grad_xi_phi[i]);
 
-                      local_rhs[i] -= (rhs_u + rhs_phi)*jxw;
+          local_rhs[i] -= (rhs_u + rhs_phi)*jxw;
 
         } // end i loop
 
@@ -540,9 +508,8 @@ assemble_system(const TrilinosWrappers::MPI::BlockVector &linerarization_point,
             {
               double m_u_u =
                   ((1.-kappa)*phi_tilda*phi_tilda + kappa)
-                  *scalar_product(sigma_u_plus[j], eps_u[i])
-                  +
-                  scalar_product(sigma_u_minus[j], eps_u[i]);
+                   *scalar_product(sigma_u_plus[j], eps_u[i])
+                  + scalar_product(sigma_u_minus[j], eps_u[i]);
 
               double m_phi_u =
                       2.*(1.-kappa)*phi_value
@@ -562,7 +529,7 @@ assemble_system(const TrilinosWrappers::MPI::BlockVector &linerarization_point,
 
               local_matrix(i, j) += (m_u_u + m_phi_u + m_phi_phi) * jxw;
 
-              } // end i&j loop
+            } // end i&j loop
       } // end q loop
 
       cell->get_dof_indices(local_dof_indices);
@@ -581,10 +548,12 @@ assemble_system(const TrilinosWrappers::MPI::BlockVector &linerarization_point,
   } // end of cell loop
 
   if (assemble_matrix)
+  {
     system_matrix.compress(VectorOperation::add);
-
-  rhs_vector.compress(VectorOperation::add);
-  residual.compress(VectorOperation::add);
+    rhs_vector.compress(VectorOperation::add);
+  }
+  else
+    residual.compress(VectorOperation::add);
 
   computing_timer.exit_section();
 
@@ -620,7 +589,7 @@ assemble_mass_matrix_diagonal()
   endc = dof_handler.end();
 
   TrilinosWrappers::MPI::BlockVector mass_matrix_diagonal;
-  mass_matrix_diagonal.reinit(owned_partitioning);
+  mass_matrix_diagonal.reinit(owned_partitioning, mpi_communicator);
   mass_matrix_diagonal = 0;
 
   for (; cell!=endc; ++cell)
@@ -640,7 +609,7 @@ assemble_mass_matrix_diagonal()
 
       cell->get_dof_indices(local_dof_indices);
       for (unsigned int i = 0; i < dofs_per_cell; i++)
-              mass_matrix_diagonal(local_dof_indices[i]) += cell_rhs(i);
+        mass_matrix_diagonal(local_dof_indices[i]) += cell_rhs(i);
     } // end cell loop
 
   mass_matrix_diagonal.compress(VectorOperation::add);
@@ -656,69 +625,69 @@ template <int dim>
 void PhaseFieldSolver<dim>::
 compute_active_set(TrilinosWrappers::MPI::BlockVector &linerarization_point)
 {
-        computing_timer.enter_section("Computing active set");
-        active_set.clear();
-        all_constraints.clear();
-        all_constraints.reinit(locally_relevant_dofs);
+  computing_timer.enter_section("Computing active set");
+  active_set.clear();
+  all_constraints.clear();
+  all_constraints.reinit(locally_relevant_dofs);
 
-        std::vector<bool> dof_touched(dof_handler.n_dofs(), false);
+  std::vector<bool> dof_touched(dof_handler.n_dofs(), false);
 
-        const unsigned int dofs_per_cell = fe.dofs_per_cell;
-        std::vector<types::global_dof_index> local_dof_indices(dofs_per_cell);
+  const unsigned int dofs_per_cell = fe.dofs_per_cell;
+  std::vector<types::global_dof_index> local_dof_indices(dofs_per_cell);
 
-        relevant_residual = residual;
-        relevant_solution = linerarization_point;
+  relevant_residual = residual;
+  relevant_solution = linerarization_point;
 
-        typename DoFHandler<dim>::active_cell_iterator
-        cell = dof_handler.begin_active(),
-        endc = dof_handler.end();
+  typename DoFHandler<dim>::active_cell_iterator
+  cell = dof_handler.begin_active(),
+  endc = dof_handler.end();
 
-        for (; cell != endc; ++cell)
-          if (cell->is_locally_owned())
+  for (; cell != endc; ++cell)
+    if (cell->is_locally_owned())
+    {
+      cell->get_dof_indices(local_dof_indices);
+      for (unsigned int i=0; i<dofs_per_cell; ++i)
+      {
+        const int component = fe.system_to_component_index(i).first;
+        const unsigned int index = local_dof_indices[i];
+
+        if (component == dim
+            && dof_touched[index] == false
+            && !hanging_nodes_constraints.is_constrained(index)
+            // && locally_owned_dofs.is_element(index)
+            )
+        {
+          dof_touched[index] = true;
+
+          double gap = relevant_solution[index] - old_solution[index];
+          double res = relevant_residual[index];
+          double mass_diag = mass_matrix_diagonal_relevant[index];
+
+          if (res/mass_diag + data.penalty_parameter*gap > 0 )
           {
-            cell->get_dof_indices(local_dof_indices);
-            for (unsigned int i=0; i<dofs_per_cell; ++i)
-            {
-              const int component = fe.system_to_component_index(i).first;
-              const unsigned int index = local_dof_indices[i];
+            active_set.add_index(index);
+            all_constraints.add_line(index);
+            all_constraints.set_inhomogeneity(index, 0.0);
+            linerarization_point(index) = old_solution(index);
+          } // end if in active set
+        } // end if touched
+      } // end dof loop
+    } // end cell loop
 
-              if (component == dim
-                  && dof_touched[index] == false
-                  && !hanging_nodes_constraints.is_constrained(index)
-                  // && locally_owned_dofs.is_element(index)
-                  )
-              {
-                dof_touched[index] = true;
+  linerarization_point.compress(VectorOperation::insert);
+  // we might have changed values of the solution, so fix the
+  // hanging nodes (we ignore in the active set):
+  hanging_nodes_constraints.distribute(linerarization_point);
 
-                double gap = relevant_solution[index] - old_solution[index];
-                double res = relevant_residual[index];
-                double mass_diag = mass_matrix_diagonal_relevant[index];
+  // since physical_constraints may fix the phase_field, because
+  // we now may constrain phase field in nodes, we merge with the
+  // priority of physical constraints
+  // all_constraints.merge(physical_constraints);
+  all_constraints.merge(physical_constraints,
+                        ConstraintMatrix::right_object_wins);
+  all_constraints.close();
 
-                if (res/mass_diag + data.penalty_parameter*gap > 0 )
-                {
-                  active_set.add_index(index);
-                  all_constraints.add_line(index);
-                  all_constraints.set_inhomogeneity(index, 0.0);
-                  linerarization_point(index) = old_solution(index);
-                } // end if in active set
-              } // end if touched
-            } // end dof loop
-          } // end cell loop
-
-        linerarization_point.compress(VectorOperation::insert);
-        // we might have changed values of the solution, so fix the
-        // hanging nodes (we ignore in the active set):
-        hanging_nodes_constraints.distribute(linerarization_point);
-
-        // since physical_constraints may fix the phase_field, because
-        // we now may constrain phase field in nodes, we merge with the
-        // priority of physical constraints
-        // all_constraints.merge(physical_constraints);
-        all_constraints.merge(physical_constraints,
-                              ConstraintMatrix::right_object_wins);
-        all_constraints.close();
-
-        computing_timer.exit_section();
+  computing_timer.exit_section();
 }    // EOM
 
 

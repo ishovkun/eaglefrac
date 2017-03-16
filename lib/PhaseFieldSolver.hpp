@@ -643,7 +643,6 @@ compute_active_set(TrilinosWrappers::MPI::BlockVector &linerarization_point)
     endc = dof_handler.end();
 
   for (; cell != endc; ++cell)
-    // if (cell->is_locally_owned())
     if (!cell->is_artificial())
     {
       cell->get_dof_indices(local_dof_indices);

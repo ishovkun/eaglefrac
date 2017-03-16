@@ -9,7 +9,8 @@ subsection Boundary conditions
   set Displacement points              = (-0.01524, 0); (0.01524, 0), (0, 0.01905); (-0.01524, 0)
   set Displacement point components    =   1,            1,            1,             0
   set Displacement point velocities    =   0,            0,           -1,             0
-  set Constraint point phase field     =   true,         true,         false,         false
+  #set Constraint point phase field     =   true,         true,         false,         false
+  set Constraint point phase field     =   false,        false,        false,        false
 end
 
 

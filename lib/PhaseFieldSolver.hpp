@@ -283,7 +283,7 @@ void PhaseFieldSolver<dim>::setup_dofs()
     rhs_vector.reinit(owned_partitioning, relevant_partitioning,
                       mpi_communicator, /* omit-zeros=*/ true);
     residual.reinit(owned_partitioning, mpi_communicator, /* omit-zeros=*/ false);
-    relevant_residual.reinit(relevant_solution);
+    relevant_residual.reinit(relevant_partitioning, mpi_communicator);
 
     active_set.clear();
     active_set.set_size(dof_handler.n_dofs());
@@ -576,7 +576,7 @@ assemble_mass_matrix_diagonal()
   FEValues<dim> fe_values(fe, quadrature_formula,
                           update_quadrature_points |
                           update_values |
-                         update_JxW_values);
+                          update_JxW_values);
 
   const unsigned int dofs_per_cell = fe.dofs_per_cell;
   const unsigned int n_q_points = quadrature_formula.size();
@@ -639,11 +639,12 @@ compute_active_set(TrilinosWrappers::MPI::BlockVector &linerarization_point)
   relevant_solution = linerarization_point;
 
   typename DoFHandler<dim>::active_cell_iterator
-  cell = dof_handler.begin_active(),
-  endc = dof_handler.end();
+    cell = dof_handler.begin_active(),
+    endc = dof_handler.end();
 
   for (; cell != endc; ++cell)
-    if (cell->is_locally_owned())
+    // if (cell->is_locally_owned())
+    if (!cell->is_artificial())
     {
       cell->get_dof_indices(local_dof_indices);
       for (unsigned int i=0; i<dofs_per_cell; ++i)

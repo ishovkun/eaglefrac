@@ -6,7 +6,6 @@
 #include <deal.II/base/timer.h>
 #include <deal.II/base/function.h>
 #include <deal.II/base/tensor.h>
-#include <deal.II/base/config.h> // for numbers::is_nan
 
 // Trilinos stuff
 #include <deal.II/lac/generic_linear_algebra.h>
@@ -393,12 +392,6 @@ assemble_system(const TrilinosWrappers::MPI::BlockVector &linerarization_point,
   double kappa = data.regularization_parameter_kappa;
   double e = data.regularization_parameter_epsilon;
 
-  // Tensor<4,dim> gassman_tensor =
-  //  ConstitutiveModel::isotropic_gassman_tensor<dim>(data.lame_constant,
-  //                                                   data.shear_modulus);
-  // Tensor<2,dim> identity_tensor =
-  //   ConstitutiveModel::get_identity_tensor<dim>();
-
   relevant_solution = linerarization_point;
 
   if (assemble_matrix)
@@ -440,32 +433,25 @@ assemble_system(const TrilinosWrappers::MPI::BlockVector &linerarization_point,
 
       for (unsigned int q=0; q<n_q_points; ++q)
       {
-        // convert from non-symmetric tensor
+        // convert from SymmetricTensor to Tensor
         convert_to_tensor(strain_tensor_values[q], strain_tensor_value);
 
+        // Simple splitting
         // stress_decomposition.get_stress_decomposition(strain_tensor_value,
         //                                               data.lame_constant,
         //                                               data.shear_modulus,
         //                                               stress_tensor_plus,
         //                                               stress_tensor_minus);
 
-        // stress_tensor_plus =
-        //     double_contract<2, 0, 3, 1>(gassman_tensor, strain_tensor_value);
+        // Spectral decomposition
+        stress_decomposition.stress_spectral_decomposition(strain_tensor_value,
+                                                           data.lame_constant,
+                                                           data.shear_modulus,
+                                                           stress_tensor_plus,
+                                                           stress_tensor_minus);
 
-        // stress_tensor_plus =
-        //         data.lame_constant*trace(strain_tensor_value)*identity_tensor
-        //         + 2*data.shear_modulus*strain_tensor_value;
-        // stress_tensor_minus = 0;
-        ConstitutiveModel::decompose_stress(stress_tensor_plus,
-                                            stress_tensor_minus,
-                                            strain_tensor_value,
-                                            trace(strain_tensor_value),
-                                            zero_matrix, 0.0,
-                                            data.lame_constant,
-                                            data.shear_modulus,
-                                            false);
-
-        if (!numbers::is_finite(stress_tensor_plus[0][0]))
+        // we get nans at the first time step
+        if (!numbers::is_finite(trace(stress_tensor_plus)))
           stress_decomposition.get_stress_decomposition(strain_tensor_value,
                                                         data.lame_constant,
                                                         data.shear_modulus,
@@ -475,8 +461,6 @@ assemble_system(const TrilinosWrappers::MPI::BlockVector &linerarization_point,
         double phi_value = phi_values[q];
         double old_phi_value = old_phi_values[q];
         double old_old_phi_value = old_old_phi_values[q];
-        // double time_step = time_steps[0];
-        // double old_time_step = time_steps[1];
         const double time_step = time_steps.first;
         const double old_time_step = time_steps.second;
         double dphi_dt_old = (old_phi_value - old_old_phi_value)/old_time_step;
@@ -498,33 +482,24 @@ assemble_system(const TrilinosWrappers::MPI::BlockVector &linerarization_point,
           {
             eps_u[k] = fe_values[displacement].symmetric_gradient(k, q);
 
-            // stress_decomposition.get_stress_decomposition_derivatives
-            //   (strain_tensor_value,
-            //    eps_u[k],
-            //    data.lame_constant,
-            //    data.shear_modulus,
-            //    sigma_u_plus[k],
-            //    sigma_u_minus[k]);
-
-            // sigma_u_plus[k] =
-            //   double_contract<2, 0, 3, 1>(gassman_tensor, eps_u[k]);
-
+            // No decomposition
             // sigma_u_plus[k] =
             //         data.lame_constant*trace(eps_u[k])*identity_tensor
             //         + 2*data.shear_modulus*eps_u[k];
             // sigma_u_minus[k] = 0;
 
-            ConstitutiveModel::decompose_stress(sigma_u_plus[k],
-                                                sigma_u_minus[k],
-                                                strain_tensor_value,
-                                                trace(strain_tensor_value),
-                                                eps_u[k], trace(eps_u[k]),
-                                                data.lame_constant,
-                                                data.shear_modulus,
-                                                true);
-            // ConstitutiveModel::print_tensor(sigma_u_plus[k]);
-            if (!numbers::is_finite(sigma_u_plus[k][0][0]))
-            // if (!numbers::is_finite(stress_tensor_plus[0][0]))
+            // Spectral decomposition
+            stress_decomposition.stress_spectral_decomposition_derivatives
+              (strain_tensor_value,
+               eps_u[k],
+               data.lame_constant,
+               data.shear_modulus,
+               sigma_u_plus[k],
+               sigma_u_minus[k]);
+
+             // we get nans at the first time step
+            // simple splitting
+            if (!numbers::is_finite(trace(sigma_u_plus[k])))
               stress_decomposition.get_stress_decomposition_derivatives
                 (strain_tensor_value,
                  eps_u[k],
@@ -623,56 +598,56 @@ template <int dim>
 void PhaseFieldSolver<dim>::
 assemble_mass_matrix_diagonal()
 {
-        // Assert (fe.degree == 1, ExcNotImplemented());
-        computing_timer.enter_section("Assemble mass matrix diagonal");
+  // Assert (fe.degree == 1, ExcNotImplemented());
+  computing_timer.enter_section("Assemble mass matrix diagonal");
 
-        // const QTrapez<dim> quadrature_formula;
-        QGaussLobatto<dim> quadrature_formula(fe.degree + 1);
+  // const QTrapez<dim> quadrature_formula;
+  QGaussLobatto<dim> quadrature_formula(fe.degree + 1);
 
-        FEValues<dim> fe_values(fe, quadrature_formula,
-                                update_quadrature_points |
-                                update_values |
-                               update_JxW_values);
+  FEValues<dim> fe_values(fe, quadrature_formula,
+                          update_quadrature_points |
+                          update_values |
+                         update_JxW_values);
 
-        const unsigned int dofs_per_cell = fe.dofs_per_cell;
-        const unsigned int n_q_points = quadrature_formula.size();
+  const unsigned int dofs_per_cell = fe.dofs_per_cell;
+  const unsigned int n_q_points = quadrature_formula.size();
 
-        Vector<double> cell_rhs(dofs_per_cell);
-        std::vector<types::global_dof_index> local_dof_indices(dofs_per_cell);
+  Vector<double> cell_rhs(dofs_per_cell);
+  std::vector<types::global_dof_index> local_dof_indices(dofs_per_cell);
 
-        typename DoFHandler<dim>::active_cell_iterator
-        cell = dof_handler.begin_active(),
-        endc = dof_handler.end();
+  typename DoFHandler<dim>::active_cell_iterator
+  cell = dof_handler.begin_active(),
+  endc = dof_handler.end();
 
-        TrilinosWrappers::MPI::BlockVector mass_matrix_diagonal;
-        mass_matrix_diagonal.reinit(owned_partitioning);
-        mass_matrix_diagonal = 0;
+  TrilinosWrappers::MPI::BlockVector mass_matrix_diagonal;
+  mass_matrix_diagonal.reinit(owned_partitioning);
+  mass_matrix_diagonal = 0;
 
-        for (; cell!=endc; ++cell)
-          if (cell->is_locally_owned())
-          {
-            fe_values.reinit(cell);
-            cell_rhs = 0;
-            for (unsigned int q_point=0; q_point<n_q_points; ++q_point)
-              for (unsigned int i=0; i<dofs_per_cell; ++i)
-              {
-                const unsigned int comp_i = fe.system_to_component_index(i).first;
-                if (comp_i == dim)
-                  cell_rhs(i) += (fe_values.shape_value(i, q_point) *
-                                  fe_values.shape_value(i, q_point) *
-                                  fe_values.JxW(q_point));
-              }
+  for (; cell!=endc; ++cell)
+    if (cell->is_locally_owned())
+    {
+      fe_values.reinit(cell);
+      cell_rhs = 0;
+      for (unsigned int q_point=0; q_point<n_q_points; ++q_point)
+        for (unsigned int i=0; i<dofs_per_cell; ++i)
+        {
+          const unsigned int comp_i = fe.system_to_component_index(i).first;
+          if (comp_i == dim)
+            cell_rhs(i) += (fe_values.shape_value(i, q_point) *
+                            fe_values.shape_value(i, q_point) *
+                            fe_values.JxW(q_point));
+        }
 
-            cell->get_dof_indices(local_dof_indices);
-            for (unsigned int i = 0; i < dofs_per_cell; i++)
-                    mass_matrix_diagonal(local_dof_indices[i]) += cell_rhs(i);
-          } // end cell loop
+      cell->get_dof_indices(local_dof_indices);
+      for (unsigned int i = 0; i < dofs_per_cell; i++)
+              mass_matrix_diagonal(local_dof_indices[i]) += cell_rhs(i);
+    } // end cell loop
 
-        mass_matrix_diagonal.compress(VectorOperation::add);
+  mass_matrix_diagonal.compress(VectorOperation::add);
 
-        mass_matrix_diagonal_relevant = mass_matrix_diagonal;
+  mass_matrix_diagonal_relevant = mass_matrix_diagonal;
 
-        computing_timer.exit_section();
+  computing_timer.exit_section();
 
 }    // EOM
 
@@ -758,33 +733,34 @@ template <int dim>
 void PhaseFieldSolver<dim>::
 solve_newton_step(const std::pair<double,double> &time_steps)
 {
-        assemble_system(solution, time_steps, true);
-        solve();
-        // solution.add(0.3, solution_update);
+    assemble_system(solution, time_steps, true);
+    // abort();
+    solve();
+    // solution.add(0.3, solution_update);
 
-        // line search
-        // relevant_solution = solution;  // store solution
-        TrilinosWrappers::MPI::BlockVector tmp_vector = solution;
-        double old_error = compute_nonlinear_residual(solution, time_steps);
-        const int max_steps = 10;
-        double damping = 0.6;
-        for(int step = 0; step < max_steps; ++step)
-        {
-                solution += solution_update;
-                compute_nonlinear_residual(solution, time_steps);
-                all_constraints.set_zero(residual);
-                double error = residual.l2_norm();
+    // line search
+    // relevant_solution = solution;  // store solution
+    TrilinosWrappers::MPI::BlockVector tmp_vector = solution;
+    double old_error = compute_nonlinear_residual(solution, time_steps);
+    const int max_steps = 10;
+    double damping = 0.6;
+    for(int step = 0; step < max_steps; ++step)
+    {
+      solution += solution_update;
+      compute_nonlinear_residual(solution, time_steps);
+      all_constraints.set_zero(residual);
+      double error = residual.l2_norm();
 
-                if (error < old_error)
-                        break;
+      if (error < old_error)
+        break;
 
-                if (step < max_steps)
-                {
-                        // solution = relevant_solution;
-                        solution = tmp_vector;
-                        solution_update *= damping;
-                }
-        } // end line search
+      if (step < max_steps)
+      {
+        // solution = relevant_solution;
+        solution = tmp_vector;
+        solution_update *= damping;
+      }
+    } // end line search
 }    // eom
 
 
@@ -792,16 +768,16 @@ template <int dim>
 bool PhaseFieldSolver<dim>::
 active_set_changed(const IndexSet &old_active_set) const
 {
-        return Utilities::MPI::sum((active_set == old_active_set) ? 0 : 1,
-                                   mpi_communicator) == 0;
+  return Utilities::MPI::sum((active_set == old_active_set) ? 0 : 1,
+                             mpi_communicator) == 0;
 }    // eom
 
 
 template <int dim>
 unsigned int PhaseFieldSolver<dim>::active_set_size() const
 {
-        return Utilities::MPI::sum((active_set & locally_owned_dofs).n_elements(),
-                                   mpi_communicator);
+  return Utilities::MPI::sum((active_set & locally_owned_dofs).n_elements(),
+                             mpi_communicator);
 }    // eom
 
 

@@ -241,6 +241,7 @@ namespace pds_solid
         }  // end first newton step condition
 
         phase_field_solver.solve_newton_step(time_steps);
+        // if (time_step_number == 2) abort();
 
         // output_results(newton_step);
         newton_step++;

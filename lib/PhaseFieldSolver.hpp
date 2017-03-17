@@ -705,7 +705,6 @@ solve_newton_step(const std::pair<double,double> &time_steps)
     assemble_system(solution, time_steps, true);
     // abort();
     solve();
-    // solution.add(0.3, solution_update);
 
     // line search
     // relevant_solution = solution;  // store solution

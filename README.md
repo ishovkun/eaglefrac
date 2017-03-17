@@ -20,6 +20,7 @@ Note: I am not the author of that paper!
 - Adaptive mesh refinement
 - Input files
 - Reads mesh in .msh format (exported from GMsh)
+- Parallel output to .vtk
 
 ## Usage
 Build deallii with mpi, Trilinos, and p4est from

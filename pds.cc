@@ -22,7 +22,7 @@ namespace pds_solid
   class PDSSolid
   {
   public:
-    PDSSolid();
+    PDSSolid(const std::string &input_file_name_);
     ~PDSSolid();
 
     void run();
@@ -46,11 +46,12 @@ namespace pds_solid
 
     input_data::NotchedTestData<dim> data;
     PhaseField::PhaseFieldSolver<dim> phase_field_solver;
+    std::string input_file_name;
   };
 
 
   template <int dim>
-  PDSSolid<dim>::PDSSolid()
+  PDSSolid<dim>::PDSSolid(const std::string &input_file_name_)
     :
     mpi_communicator(MPI_COMM_WORLD),
     triangulation(mpi_communicator,
@@ -65,7 +66,8 @@ namespace pds_solid
                     TimerOutput::wall_times),
     phase_field_solver(mpi_communicator,
                        triangulation, data,
-                       pcout, computing_timer)
+                       pcout, computing_timer),
+    input_file_name(input_file_name_)
   {}
 
 
@@ -145,8 +147,8 @@ namespace pds_solid
   template <int dim>
   void PDSSolid<dim>::run()
   {
-    // data.read_input_file("notched_test.prm");
-    data.read_input_file("three-point-bending.prm");
+    data.read_input_file("notched_test.prm");
+    // data.read_input_file("three-point-bending.prm");
     read_mesh();
 
     // debug input
@@ -400,6 +402,28 @@ namespace pds_solid
 }  // end of namespace
 
 
+std::string parse_command_line(int argc, char *const *argv) {
+  std::string filename;
+  if (argc < 2) {
+    std::cout << "specify the file name" << std::endl;
+    exit(1);
+  }
+
+  std::list<std::string> args;
+  for (int i=1; i<argc; ++i)
+    args.push_back(argv[i]);
+
+  int arg_number = 1;
+  while (args.size()){
+    std::cout << args.front() << std::endl;
+    if (arg_number == 1)
+      filename = args.front();
+    args.pop_front();
+    arg_number++;
+  } // EO while args
+
+  return filename;
+}  // EOM
 
 int main(int argc, char *argv[])
 {
@@ -407,7 +431,8 @@ int main(int argc, char *argv[])
   {
     using namespace dealii;
     Utilities::MPI::MPI_InitFinalize mpi_initialization(argc, argv, 1);
-    pds_solid::PDSSolid<2> problem;
+    std::string input_file_name = parse_command_line(argc, argv);
+    pds_solid::PDSSolid<2> problem(input_file_name);
     problem.run();
     return 0;
   }

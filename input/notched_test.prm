@@ -29,7 +29,7 @@ subsection Mesh
   set Local refinement region         = 0.4, 0.6, 0.4, 0.6
   set Adaptive steps                  = 3  
   set Adaptive phi value              = 0.4
-  set Mesh file                       = mesh/unit_slit.msh
+  set Mesh file                       = input/unit_slit.msh
 end
 
 

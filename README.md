@@ -76,7 +76,7 @@ The following runs the three-point-bending case:
 ~~~~
 cmake .
 make
-mpirun -np 1 ./pds three-point-bending.prm
+mpirun -np 1 ./pds ./input/three-point-bending.prm
 ~~~~
 
 ## Notes

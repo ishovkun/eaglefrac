@@ -425,10 +425,10 @@ namespace pds_solid
                               Utilities::int_to_string (i,
                                                         n_processor_digits) +
                               ".vtu");
-        std::ofstream master_output(("./" + case_name + "/solution-" +
-                                     Utilities::int_to_string(time_step_number,
-                                                              n_time_step_digits) +
-                                     ".pvtu").c_str());
+        std::ofstream
+          master_output(("./" + case_name + "/solution-" +
+                         Utilities::int_to_string(time_step_number, n_time_step_digits) +
+                         ".pvtu").c_str());
         data_out.write_pvtu_record(master_output, filenames);
       }  // end master output
   } // EOM

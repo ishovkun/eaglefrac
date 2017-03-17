@@ -28,6 +28,9 @@ Build deallii with mpi, Trilinos, and p4est from
 - Trilinos https://trilinos.org/
 - p4est http://www.p4est.org/
 
+Also, you need to have Boost library built or installed
+(libboost-all-dev on Ubuntu)
+
 ### Building Trilinos for dealii
 The following installs dealii into /home/user_name/share/trilinos
 ~~~~

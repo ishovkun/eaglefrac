@@ -6,6 +6,10 @@
 
 #include <limits>       // std::numeric_limits
 
+// #define BOOST_NO_CXX11_SCOPED_ENUMS
+#include <boost/filesystem.hpp>
+// #undef BOOST_NO_CXX11_SCOPED_ENUMS
+
 // Custom modules
 #include <PhaseFieldSolver.hpp>
 #include <Postprocessing.hpp>
@@ -36,6 +40,7 @@ namespace pds_solid
     void refine_mesh();
     void execute_postprocessing(const double time);
     void exectute_adaptive_refinement();
+    void prepare_output_directories();
 
     MPI_Comm mpi_communicator;
 
@@ -46,7 +51,7 @@ namespace pds_solid
 
     input_data::NotchedTestData<dim> data;
     PhaseField::PhaseFieldSolver<dim> phase_field_solver;
-    std::string input_file_name;
+    std::string input_file_name, case_name;
   };
 
 
@@ -145,9 +150,35 @@ namespace pds_solid
 
 
   template <int dim>
+  void PDSSolid<dim>::prepare_output_directories()
+  {
+    size_t extension_index = input_file_name.find_last_of(".");
+    size_t path_index = input_file_name.find_last_of("/");
+    case_name = input_file_name.substr(path_index+1, extension_index);
+
+    boost::filesystem::path output_directory_path("./" + case_name);
+
+    if (!boost::filesystem::is_directory(output_directory_path))
+    {
+        pcout << "Output folder not found\n"
+              << "Creating directory: ";
+        if (boost::filesystem::create_directory(output_directory_path))
+          std::cout << "Success" << std::endl;
+    }
+    else
+    { // remove everything from this directory
+      pcout << "Folder exists: cleaning folder: ";
+      boost::filesystem::remove_all(output_directory_path);
+      if (boost::filesystem::create_directory(output_directory_path))
+         std::cout << "Success" << std::endl;
+    }
+
+  }  // eom
+
+  template <int dim>
   void PDSSolid<dim>::run()
   {
-    data.read_input_file("notched_test.prm");
+    data.read_input_file(input_file_name);
     // data.read_input_file("three-point-bending.prm");
     read_mesh();
 
@@ -158,6 +189,8 @@ namespace pds_solid
     // for (int i=0; i< data.constraint_point_phase_field.size(); ++i)
     //   pcout << data.constraint_point_phase_field[i] << std::endl;
     // return;
+
+    prepare_output_directories();
 
     // compute_runtime_parameters
     double minimum_mesh_size = Mesher::compute_minimum_mesh_size(triangulation,
@@ -368,7 +401,7 @@ namespace pds_solid
         n_processor_digits = 3;
 
     // Write output from local processors
-    const std::string filename = ("solution/solution-" +
+    const std::string filename = ("./" + case_name + "/solution-" +
                                   Utilities::int_to_string(time_step_number,
                                                            n_time_step_digits) +
                                   "." +
@@ -392,7 +425,7 @@ namespace pds_solid
                               Utilities::int_to_string (i,
                                                         n_processor_digits) +
                               ".vtu");
-        std::ofstream master_output(("solution/solution-" +
+        std::ofstream master_output(("./" + case_name + "/solution-" +
                                      Utilities::int_to_string(time_step_number,
                                                               n_time_step_digits) +
                                      ".pvtu").c_str());

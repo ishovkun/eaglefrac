@@ -250,11 +250,11 @@ void PhaseFieldSolver<dim>::setup_dofs()
      */
     Table<2,DoFTools::Coupling> coupling(dim+1, dim+1);
     for (unsigned int c=0; c<dim+1; ++c)
-            for (unsigned int d=0; d<dim+1; ++d)
-                    if ( (c<=dim && d<dim) || (c==dim && d==dim) )
-                            coupling[c][d] = DoFTools::always;
-                    else
-                            coupling[c][d] = DoFTools::none;
+      for (unsigned int d=0; d<dim+1; ++d)
+        if ( (c<=dim && d<dim) || (c==dim && d==dim) )
+          coupling[c][d] = DoFTools::always;
+        else
+          coupling[c][d] = DoFTools::none;
 
     // BlockDynamicSparsityPattern sp(dofs_per_block, dofs_per_block);
     TrilinosWrappers::BlockSparsityPattern sp(owned_partitioning,

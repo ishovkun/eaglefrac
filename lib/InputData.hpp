@@ -2,7 +2,7 @@
 
 #include <deal.II/base/parameter_handler.h>
 #include <boost/algorithm/string.hpp>
-#include <boost/lexical_cast.hpp>
+#include <boost/any.hpp>
 #include <cstdlib>
 
 // custom modules
@@ -15,43 +15,45 @@ namespace input_data {
   template<typename T>
   std::vector<T> parse_string_list(std::string list_string,
                                    std::string delimiter=",")
-    {
-      std::vector<T> list;
-      T item;
-      if (list_string.size() == 0) return list;
-      std::vector<std::string> strs;
-      boost::split(strs, list_string, boost::is_any_of(delimiter));
+  {
+    std::vector<T> list;
+    T item;
+    if (list_string.size() == 0) return list;
+    std::vector<std::string> strs;
+    boost::split(strs, list_string, boost::is_any_of(delimiter));
 
-      for (const auto &string_item : strs)
-      {
-        std::stringstream convert(string_item);
-        convert >> item;
-        list.push_back(item);
-      }
-      return list;
+    for (const auto &string_item : strs)
+    {
+      std::stringstream convert(string_item);
+      convert >> item;
+      list.push_back(item);
     }
+    return list;
+  }
+
 
   template<>
   std::vector<bool> parse_string_list(std::string list_string,
                                       std::string delimiter)
-    {
-      // std::cout << "Parsing bool list" << std::endl;
-      std::vector<bool> list;
-      bool item;
-      if (list_string.size() == 0) return list;
-      std::vector<std::string> strs;
-      boost::split(strs, list_string, boost::is_any_of(delimiter));
+  {
+    // std::cout << "Parsing bool list" << std::endl;
+    std::vector<bool> list;
+    bool item;
+    if (list_string.size() == 0) return list;
+    std::vector<std::string> strs;
+    boost::split(strs, list_string, boost::is_any_of(delimiter));
 
-      for (auto &string_item : strs)
-      {
-        std::istringstream is(string_item);
-        is >> std::boolalpha >> item;
-        // std::cout << std::endl << string_item << std::endl;
-        // std::cout << item << std::endl;
-        list.push_back(item);
-      }
-      return list;
+    for (auto &string_item : strs)
+    {
+      std::istringstream is(string_item);
+      is >> std::boolalpha >> item;
+      // std::cout << std::endl << string_item << std::endl;
+      // std::cout << item << std::endl;
+      list.push_back(item);
     }
+    return list;
+  }
+
 
   template <int dim>
   std::vector< Point<dim> > parse_point_list(const std::string &str)
@@ -88,6 +90,35 @@ namespace input_data {
 
     return points;
   }  // eom
+
+
+  std::vector<std::string> parse_pathentheses_list(const std::string &str)
+  {
+    std::vector<std::string> result;
+    unsigned int i = 0;
+    // loop over symbols and get strings surrounded by ()
+    while (i < str.size())
+    {
+      if (str.compare(i, 1, "(") == 0)  // if str[i] == "(" -> begin point
+      {
+        std::string tmp;
+        while (i < str.size())
+        {
+          i++;
+
+          if (str.compare(i, 1, ")") != 0)
+            tmp.push_back(str[i]);
+          else
+            break;
+       }  // end insize parentheses
+       // add what's inside parantheses
+       result.push_back(tmp);
+      }
+      i++;
+    }
+    return result;
+  }
+
 
 
   template <int dim>
@@ -144,30 +175,26 @@ namespace input_data {
     void declare_parameters();
     void compute_runtime_parameters();
     void assign_parameters();
+    void check_input();
 
     ParameterHandler prm;
     bool uniform_fracture_toughness, uniform_young_modulus;
     // Properties
     double fracture_toughness_constant;
-    std::pair<double,double> fracture_toughness_limits;
+    std::pair<double,double> fracture_toughness_limits, young_modulus_limits;
     std::pair<double,double> regularization_epsilon_coefficients;
     // Files
     std::string bitmap_file_name;
     // Other
     std::vector< std::pair<double,double> > bitmap_range;
     std::vector<std::string> postprocessing_function_names;
+    std::vector<boost::any>  postprocessing_function_args;
   };
 
   template <int dim>
   NotchedTestData<dim>::NotchedTestData()
   {
     declare_parameters();
-
-    // this->lame_constant = 121.15*1e3;
-    // this->shear_modulus   = 80.77*1e3;
-
-    // postprocessing
-    postprocessing_function_names = {"Load"};
 
   }  // EOM
 
@@ -273,6 +300,12 @@ namespace input_data {
       prm.declare_entry("Max Newton steps", "20", Patterns::Integer());
       prm.leave_subsection();
     }
+    {
+      prm.enter_subsection("Postprocessing");
+      prm.declare_entry("Functions", "", Patterns::Anything());
+      prm.declare_entry("Arguments", "", Patterns::Anything());
+      prm.leave_subsection();
+    }
   }  // eom
 
 
@@ -283,8 +316,47 @@ namespace input_data {
     prm.print_parameters(std::cout, ParameterHandler::Text);
     assign_parameters();
     compute_runtime_parameters();
+    check_input();
   }  // eom
 
+
+template <int dim>
+void NotchedTestData<dim>::check_input()
+{
+  if (!this->uniform_fracture_toughness)
+    {
+      AssertThrow(fracture_toughness_limits.first > 0,
+        ExcMessage("Fracture toughness should be > 0"));
+      AssertThrow(fracture_toughness_limits.second > 0,
+        ExcMessage("Fracture toughness should be > 0"));
+    }
+   else
+      AssertThrow(fracture_toughness_constant > 0,
+        ExcMessage("Fracture toughness should be > 0"));
+
+  if (!this->uniform_young_modulus)
+    {
+      AssertThrow(this->young_modulus_limits.first > 0,
+        ExcMessage("Young's modulus should be > 0"));
+      AssertThrow(this->young_modulus_limits.second > 0,
+        ExcMessage("Young modulus should be > 0"));
+    }
+   else
+      AssertThrow(this->young_modulus > 0,
+        ExcMessage("Young modulus should be > 0"));
+
+  if (!this->uniform_young_modulus
+      &&
+      !this->uniform_fracture_toughness)
+  {
+    AssertThrow(this->bitmap_range[0].first < this->bitmap_range[0].second,
+                ExcMessage("Bitmap range is incorrect"));
+    AssertThrow(this->bitmap_range[1].first < this->bitmap_range[1].second,
+                ExcMessage("Bitmap range is incorrect"));
+  }
+
+
+}
 
 template <int dim>
 void NotchedTestData<dim>::assign_parameters()
@@ -328,12 +400,33 @@ void NotchedTestData<dim>::assign_parameters()
     // Uniformity boolean
     this->uniform_fracture_toughness = prm.get_bool("Uniform fracture toughness");
     this->uniform_young_modulus = prm.get_bool("Uniform Young modulus");
-    // constant values
-    this->young_modulus = prm.get_double("Young modulus");
+
+    // coefficients that are either constant or mapped
+    if (this->uniform_fracture_toughness)
+      this->fracture_toughness_constant = prm.get_double("Fracture toughness");
+    else
+    {
+      std::vector<double> tmp;
+      tmp.resize(2);
+      tmp = parse_string_list<double>(prm.get("Fracture toughness range"));
+      this->fracture_toughness_limits.first = tmp[0];
+      this->fracture_toughness_limits.second = tmp[1];
+    }
+
+    if (this->uniform_young_modulus)
+      this->young_modulus = prm.get_double("Young modulus");
+    else
+    {
+      std::vector<double> tmp;
+      tmp.resize(2);
+      tmp = parse_string_list<double>(prm.get("Young modulus range"));
+      this->young_modulus_limits.first = tmp[0];
+      this->young_modulus_limits.second = tmp[1];
+    }
+
     this->poisson_ratio = prm.get_double("Poisson ratio");
     this->regularization_parameter_kappa = prm.get_double("Regularization kappa");
     this->penalty_parameter = prm.get_double("Penalization c");
-    this->fracture_toughness_constant = prm.get_double("Fracture toughness");
     std::vector<double> tmp =
       parse_string_list<double>(prm.get("Regularization epsilon"));
     regularization_epsilon_coefficients.first = tmp[0];
@@ -361,6 +454,43 @@ void NotchedTestData<dim>::assign_parameters()
     this->minimum_time_step = prm.get_double("Minimum time step");
     this->newton_tolerance = prm.get_double("Newton tolerance");
     this->max_newton_iter = prm.get_integer("Max Newton steps");
+    prm.leave_subsection();
+  }
+  { // Postprocessing
+    prm.enter_subsection("Postprocessing");
+    postprocessing_function_names =
+        parse_string_list<std::string>(prm.get("Functions"));
+
+    std::vector<std::string> tmp =
+        parse_pathentheses_list(prm.get("Arguments"));
+
+    AssertThrow(tmp.size() == postprocessing_function_names.size(),
+                ExcMessage("Number of argument groups needs to match number of functions"));
+
+    // loop through function names and assign the appropriate parameters
+    for (unsigned int i=0; i<postprocessing_function_names.size(); i++)
+    {
+      // std::cout << "Reading " << postprocessing_function_names[i] << std::endl;
+      // std::cout << "Args: " << tmp[i] << std::endl;
+      // std::vector<std::string> arguments_string;
+      // boost::any args;
+      // unsigned int l = postprocessing_function_names[i].size();
+      // boost::split(arguments_string, tmp[i], boost::is_any_of(","));
+
+    //   std::cout << "len: " << arguments_string.size() << std::endl;
+    //   if (postprocessing_function_names[i].compare(0, l, "boundary_load"))
+    //   { // this function takes only a list of integers
+    //     for (const auto &arg : arguments_string)
+    //     {
+    //       std::stringstream convert(arg);
+    //       int item;
+    //       convert >> item;
+    //       args.push_back(item);
+    //     }
+    //   }
+    //   postprocessing_function_args.push_back(args);
+    }
+
     prm.leave_subsection();
   }
 

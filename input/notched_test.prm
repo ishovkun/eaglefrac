@@ -41,4 +41,9 @@ subsection Solver
   set T max             = 0.01
 end
 
+subsection Postprocessing
+  set Functions = boundary_load
+  set Arguments = (3, 1);
+end
+
 

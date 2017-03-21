@@ -16,6 +16,7 @@ namespace BitMap {
   private:
     std::vector<double> image_data;
     double hx, hy;
+    double maxvalue = 255;
     int nx, ny;
     double get_pixel_value(const int i, const int j) const;
   };
@@ -36,18 +37,24 @@ namespace BitMap {
     std::string temp;
     getline(f, temp);
     f >> temp;
-    if (temp[0]=='#')
+    // if (temp[0]=='#')
+    if (temp.compare(0, 1, "#") == 0)
       getline(f, temp);
 
     f >> nx >> ny;
+    // std::cout << "nx " << nx << " ny " << ny << std::endl;
+    f >> maxvalue;
+    // std::cout << "max_pixel " << maxvalue << std::endl;
 
-    AssertThrow(nx > 0 && ny > 0, ExcMessage("Invalid file format."));
+    AssertThrow(nx > 0 && ny > 0,  ExcMessage("Invalid file format."));
+    AssertThrow(maxvalue == 255.0, ExcMessage("Invalid file format."));
 
     for (int k = 0; k < nx * ny; k++)
       {
         unsigned int val;
         f >> val;
-        image_data.push_back(val / 255.0);
+        image_data.push_back(val / maxvalue);
+        AssertThrow(val <= maxvalue, ExcMessage("Invalid file format."));
       }
 
     hx = 1.0 / (nx - 1);
@@ -68,6 +75,12 @@ namespace BitMap {
   {
     const int ix = std::min(std::max((int) (x / hx), 0), nx - 2);
     const int iy = std::min(std::max((int) (y / hy), 0), ny - 2);
+    // std::cout << "nx " << nx << std::endl;
+    // std::cout << "ny " << ny << std::endl;
+    // std::cout << "x " << x << std::endl;
+    // std::cout << "y " << y << std::endl;
+    // std::cout << "ix " << ix << std::endl;
+    // std::cout << "iy " << iy << std::endl;
 
     const double xi  = std::min(std::max((x-ix*hx)/hx, 1.), 0.);
     const double eta = std::min(std::max((y-iy*hy)/hy, 1.), 0.);

@@ -152,27 +152,35 @@ namespace pds_solid
   template <int dim>
   void PDSSolid<dim>::prepare_output_directories()
   {
-    size_t extension_index = input_file_name.find_last_of(".");
     size_t path_index = input_file_name.find_last_of("/");
-    case_name = input_file_name.substr(path_index+1, extension_index);
+
+    size_t extension_index = input_file_name.substr(path_index).rfind(".");
+    // if (extension_index != string::npos)
+    //   extension = filename.substr(pos+1);
+
+    case_name = input_file_name.substr(path_index+1, extension_index-1);
+    // std::cout << "input file " << input_file_name << std::endl;
+    // std::cout << "case name: " << case_name << std::endl;
 
     boost::filesystem::path output_directory_path("./" + case_name);
 
-    if (!boost::filesystem::is_directory(output_directory_path))
+    if (Utilities::MPI::this_mpi_process(mpi_communicator) == 0)
     {
-        pcout << "Output folder not found\n"
-              << "Creating directory: ";
+      if (!boost::filesystem::is_directory(output_directory_path))
+      {
+          pcout << "Output folder not found\n"
+                << "Creating directory: ";
+          if (boost::filesystem::create_directory(output_directory_path))
+            std::cout << "Success" << std::endl;
+      }
+      else
+      { // remove everything from this directory
+        pcout << "Folder exists: cleaning folder: ";
+        boost::filesystem::remove_all(output_directory_path);
         if (boost::filesystem::create_directory(output_directory_path))
-          std::cout << "Success" << std::endl;
+           std::cout << "Success" << std::endl;
+      }
     }
-    else
-    { // remove everything from this directory
-      pcout << "Folder exists: cleaning folder: ";
-      boost::filesystem::remove_all(output_directory_path);
-      if (boost::filesystem::create_directory(output_directory_path))
-         std::cout << "Success" << std::endl;
-    }
-
   }  // eom
 
   template <int dim>
@@ -183,14 +191,18 @@ namespace pds_solid
     read_mesh();
 
     // debug input
+    Point<dim> p(3e-3, 0.01), p1(3e-3, 0.01905);
+    pcout << "toughness " << data.get_fracture_toughness->value(p, 0) << std::endl;
+    pcout << "toughness1 " << data.get_fracture_toughness->value(p1, 0) << std::endl;
     // pcout << " Yo!" << std::endl;
     // pcout << data.displacement_point_velocities.size() << std::endl << std::flush;
     // pcout << data.displacement_point_velocities[0];
     // for (int i=0; i< data.constraint_point_phase_field.size(); ++i)
     //   pcout << data.constraint_point_phase_field[i] << std::endl;
-    // return;
+    return;
 
     prepare_output_directories();
+    // return;
 
     // compute_runtime_parameters
     double minimum_mesh_size = Mesher::compute_minimum_mesh_size(triangulation,
@@ -346,26 +358,29 @@ namespace pds_solid
   template <int dim>
   void PDSSolid<dim>::execute_postprocessing(const double time)
   {
-    if (data.displacement_boundary_labels.size() > 1)
-    {
-      int boundary_id = data.displacement_boundary_labels[1];
-      Tensor<1,dim> load = Postprocessing::compute_boundary_load(phase_field_solver,
-                                                                 data,
-                                                                 boundary_id);
-      double d = data.displacement_boundary_velocities[1]*time;
-
-      if (Utilities::MPI::this_mpi_process(mpi_communicator) == 0)
-      {
-        std::ofstream ff;
-        ff.open("solution/post.txt", std::ios_base::app);
-        ff << time << "\t"
-           << d << "\t"
-           << load[0] << "\t"
-           << load[1] << "\t"
-           << std::endl;
-      }
-    }
-  }  // eomj
+    // just some commands so no compiler warnings
+    double aa = time;
+    aa++;
+    // if (data.displacement_boundary_labels.size() > 1)
+    // {
+    //   int boundary_id = data.displacement_boundary_labels[1];
+    //   Tensor<1,dim> load = Postprocessing::compute_boundary_load(phase_field_solver,
+    //                                                              data,
+    //                                                              boundary_id);
+    //   double d = data.displacement_boundary_velocities[1]*time;
+    //
+    //   if (Utilities::MPI::this_mpi_process(mpi_communicator) == 0)
+    //   {
+    //     std::ofstream ff;
+    //     ff.open("solution/post.txt", std::ios_base::app);
+    //     ff << time << "\t"
+    //        << d << "\t"
+    //        << load[0] << "\t"
+    //        << load[1] << "\t"
+    //        << std::endl;
+    //   }
+    // }
+  }  // eom
 
 
   template <int dim>

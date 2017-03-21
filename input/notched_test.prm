@@ -25,9 +25,9 @@ end
 
 subsection Mesh
   set Initial global refinement steps = 4
-  set Local refinement steps          = 2
+  set Local refinement steps          = 0
   set Local refinement region         = 0.4, 0.6, 0.4, 0.6
-  set Adaptive steps                  = 3  
+  set Adaptive steps                  = 2  
   set Adaptive phi value              = 0.4
   set Mesh file                       = input/unit_slit.msh
 end
@@ -43,7 +43,7 @@ end
 
 subsection Postprocessing
   set Functions = boundary_load
-  set Arguments = (3, 1);
+  set Arguments = (3);
 end
 
 

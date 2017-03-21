@@ -4,6 +4,7 @@
 #include <boost/algorithm/string.hpp>
 #include <boost/any.hpp>
 #include <cstdlib>
+// #include <typeinfo>  // for typeinfo :-)
 
 // custom modules
 #include <BitMap.hpp>
@@ -170,6 +171,14 @@ namespace input_data {
     double phi_refinement_value;
     std::vector<std::pair<double,double>> local_prerefinement_region;
     std::string mesh_file_name;
+    // postprocessing
+    std::vector<std::string> postprocessing_function_names;
+
+    // this is a container for postprocessing function arguments
+    // they can be strings, ints, or doubles
+    std::vector< std::vector< boost::variant<int, double, std::string> > >
+      postprocessing_function_args;
+
 
   private:
     void declare_parameters();
@@ -183,12 +192,9 @@ namespace input_data {
     double fracture_toughness_constant;
     std::pair<double,double> fracture_toughness_limits, young_modulus_limits;
     std::pair<double,double> regularization_epsilon_coefficients;
-    // Files
+    // Bitmap
     std::string bitmap_file_name;
-    // Other
     std::vector< std::pair<double,double> > bitmap_range;
-    std::vector<std::string> postprocessing_function_names;
-    std::vector<boost::any>  postprocessing_function_args;
   };
 
   template <int dim>
@@ -355,6 +361,9 @@ void NotchedTestData<dim>::check_input()
                 ExcMessage("Bitmap range is incorrect"));
   }
 
+AssertThrow(this->postprocessing_function_names.size() ==
+            this->postprocessing_function_args.size(),
+            ExcMessage("Postprocessing input incorrect"));
 
 }
 
@@ -472,24 +481,40 @@ void NotchedTestData<dim>::assign_parameters()
     {
       // std::cout << "Reading " << postprocessing_function_names[i] << std::endl;
       // std::cout << "Args: " << tmp[i] << std::endl;
-      // std::vector<std::string> arguments_string;
-      // boost::any args;
-      // unsigned int l = postprocessing_function_names[i].size();
-      // boost::split(arguments_string, tmp[i], boost::is_any_of(","));
+      std::vector<std::string> string_vector;
+      std::vector< boost::variant<int, double, std::string> > args;
+      boost::split(string_vector, tmp[i], boost::is_any_of(","));
 
-    //   std::cout << "len: " << arguments_string.size() << std::endl;
-    //   if (postprocessing_function_names[i].compare(0, l, "boundary_load"))
-    //   { // this function takes only a list of integers
-    //     for (const auto &arg : arguments_string)
-    //     {
-    //       std::stringstream convert(arg);
-    //       int item;
-    //       convert >> item;
-    //       args.push_back(item);
-    //     }
-    //   }
-    //   postprocessing_function_args.push_back(args);
+      unsigned int l = postprocessing_function_names[i].size();
+      if (postprocessing_function_names[i].compare(0, l, "boundary_load") == 0)
+      { // this function takes only a list of integers
+        for (const auto &arg : string_vector)
+        {
+          std::stringstream convert(arg);
+          int item;
+          convert >> item;
+          args.push_back(item);
+        }
+      }
+      postprocessing_function_args.push_back(args);
     }
+
+    // this demonstrates how to get the types stored in a boost::variant variable
+    // for (unsigned int i=0; i<postprocessing_function_args[0].size(); i++)
+    // {
+    //   int t = postprocessing_function_args[0][i].which();
+    //   // std::cout << postprocessing_function_args[0][i].which() << std::endl;
+    //   if (t == 0)
+    //     std:: cout << "type: int" << "\t";
+    //   else if (t == 1)
+    //     std:: cout << "type: double" << "\t";
+    //   else
+    //     std:: cout << "type: std::string" << "\t";
+    //
+    //   std::cout << "value: "
+    //             << postprocessing_function_args[0][i] << "\t"
+    //             << std::endl;
+    // }
 
     prm.leave_subsection();
   }

@@ -6,9 +6,8 @@
 
 #include <limits>       // std::numeric_limits
 
-// #define BOOST_NO_CXX11_SCOPED_ENUMS
 #include <boost/filesystem.hpp>
-// #undef BOOST_NO_CXX11_SCOPED_ENUMS
+#include <boost/variant/get.hpp>
 
 // Custom modules
 #include <PhaseFieldSolver.hpp>
@@ -187,19 +186,18 @@ namespace pds_solid
   void PDSSolid<dim>::run()
   {
     data.read_input_file(input_file_name);
-    // data.read_input_file("three-point-bending.prm");
     read_mesh();
 
     // debug input
-    Point<dim> p(3e-3, 0.01), p1(3e-3, 0.01905);
-    pcout << "toughness " << data.get_fracture_toughness->value(p, 0) << std::endl;
-    pcout << "toughness1 " << data.get_fracture_toughness->value(p1, 0) << std::endl;
+    // Point<dim> p(3e-3, 0.01), p1(3e-3, 0.01905);
+    // pcout << "toughness " << data.get_fracture_toughness->value(p, 0) << std::endl;
+    // pcout << "toughness1 " << data.get_fracture_toughness->value(p1, 0) << std::endl;
     // pcout << " Yo!" << std::endl;
     // pcout << data.displacement_point_velocities.size() << std::endl << std::flush;
     // pcout << data.displacement_point_velocities[0];
     // for (int i=0; i< data.constraint_point_phase_field.size(); ++i)
     //   pcout << data.constraint_point_phase_field[i] << std::endl;
-    return;
+    // return;
 
     prepare_output_directories();
     // return;
@@ -333,6 +331,7 @@ namespace pds_solid
       phase_field_solver.truncate_phase_field();
       output_results(time_step_number);
       execute_postprocessing(time);
+      // return;
 
       phase_field_solver.use_old_time_step_phi = true;
 
@@ -359,27 +358,32 @@ namespace pds_solid
   void PDSSolid<dim>::execute_postprocessing(const double time)
   {
     // just some commands so no compiler warnings
-    double aa = time;
-    aa++;
-    // if (data.displacement_boundary_labels.size() > 1)
-    // {
-    //   int boundary_id = data.displacement_boundary_labels[1];
-    //   Tensor<1,dim> load = Postprocessing::compute_boundary_load(phase_field_solver,
-    //                                                              data,
-    //                                                              boundary_id);
-    //   double d = data.displacement_boundary_velocities[1]*time;
-    //
-    //   if (Utilities::MPI::this_mpi_process(mpi_communicator) == 0)
-    //   {
-    //     std::ofstream ff;
-    //     ff.open("solution/post.txt", std::ios_base::app);
-    //     ff << time << "\t"
-    //        << d << "\t"
-    //        << load[0] << "\t"
-    //        << load[1] << "\t"
-    //        << std::endl;
-    //   }
-    // }
+    for (unsigned int i=0; i<data.postprocessing_function_names.size(); i++)
+    {
+      unsigned int l = data.postprocessing_function_names[i].size();
+      if (data.postprocessing_function_names[i].compare(0, l, "boundary_load") == 0)
+      {
+        int boundary_id =
+            boost::get<int>(data.postprocessing_function_args[i][0]);
+        Tensor<1,dim> load =
+          Postprocessing::compute_boundary_load(phase_field_solver,
+                                                data, boundary_id);
+        // Sum write output
+        if (Utilities::MPI::this_mpi_process(mpi_communicator) == 0)
+        {
+          std::ofstream ff;
+          ff.open("./" + case_name + "/boundary_load-" +
+                  Utilities::int_to_string(boundary_id, 1) +
+                  ".txt",
+                  std::ios_base::app);
+          ff << time << "\t"
+             << load[0] << "\t"
+             << load[1] << "\t"
+             << std::endl;
+        }
+      }  // end boundary load
+
+    }  // end loop over postprocessing functions
   }  // eom
 
 

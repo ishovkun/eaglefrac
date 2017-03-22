@@ -47,8 +47,8 @@ namespace Postprocessing {
 
             for (int q=0; q<n_q_points; ++q)
             {
-              double lame_constant = data.lame_constant;
-              double shear_modulus = data.shear_modulus;
+              const double lame_constant = data.lame_constant;
+              const double shear_modulus = data.shear_modulus;
 
               PhaseField::convert_to_tensor(strain_values[q], strain_value);
 

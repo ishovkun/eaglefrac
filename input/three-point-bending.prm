@@ -3,14 +3,22 @@
 # radius = 0.01905
 # s = 0.8*r = 0.01524
 subsection Boundary conditions
-  set Displacement boundary labels     =
-  set Displacement boundary components =
-  set Displacement boundary velocities =
+  
+  set Displacement boundary labels     = 
+  set Displacement boundary components = 
+  set Displacement boundary velocities = 
   set Displacement points              = (-0.01524, 0); (0.01524, 0), (0, 0.01905); (-0.01524, 0)
   set Displacement point components    =   1,            1,            1,             0
   set Displacement point velocities    =   0,            0,           -1,             0
-  #set Constraint point phase field     =   true,         true,         false,         false
-  set Constraint point phase field     =   false,        false,        false,        false
+  set Constraint point phase field     =   false,        false,        true,        false
+  
+  #set Displacement boundary labels     =  1
+  #set Displacement boundary components =  1
+  #set Displacement boundary velocities = -1
+  #set Displacement points              = (-0.01524, 0); (0.01524, 0); (-0.01524, 0)
+  #set Displacement point components    =   1,            1,             0
+  #set Displacement point velocities    =   0,            0,             0
+  #set Constraint point phase field     =   false,        false,         false
 end
 
 
@@ -18,7 +26,7 @@ subsection Equation data
   set Fracture toughness         = 0.25
   set Young modulus              = 1e3
   set Poisson ratio              = 0.3
-  set Regularization epsilon     = 3, 1
+  set Regularization epsilon     = 5, 1
   set Regularization kappa       = 1e-10
   set Penalization c             = 1
   set Uniform Poisson ratio      = true
@@ -32,9 +40,11 @@ end
 subsection Mesh
   set Initial global refinement steps = 0
   set Local refinement steps          = 0
-  set Local refinement region         = 0.4, 0.6, 0.4, 0.6
+  set Local refinement region         = -0.002, 0.002, 0.002, 0.008 # refine notch
+  #set Local refinement region         = -0.002, 0.002, 0.015, 0.0191 # refine top arc
   set Adaptive steps                  = 3
-  set Adaptive phi value              = 0.8
+  set Adaptive phi value              = 0.6
+  #set Mesh file                       = input/SCB.msh
   set Mesh file                       = input/notch_semicircle.msh
 end
 
@@ -44,5 +54,11 @@ subsection Solver
   set Max Newton steps  = 40
   set Minimum time step = 1e-6
   set Newton tolerance  = 1e-9
-  set T max             = 0.02
+  set T max             = 0.01
+end
+
+# this computes load on the top boundary
+subsection Postprocessing
+  set Functions = boundary_load
+  set Arguments = (1);
 end

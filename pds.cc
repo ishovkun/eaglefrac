@@ -347,13 +347,6 @@ namespace pds_solid
   }  // EOM
 
 
-  // template <int dim>
-  // void PDSSolid<dim>::prepare_postprocessing(double time)
-  // {
-  //
-  // }  // eom
-
-
   template <int dim>
   void PDSSolid<dim>::execute_postprocessing(const double time)
   {

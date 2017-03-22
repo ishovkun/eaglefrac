@@ -211,7 +211,7 @@ namespace input_data {
     double E = this->young_modulus;
     double nu = this->poisson_ratio;
     this->lame_constant = E*nu/((1. + nu)*(1. - 2.*nu));
-    this->shear_modulus = 0.5*E/(1 + nu);
+    this->shear_modulus = 0.5*E/(1. + nu);
 
     if (uniform_fracture_toughness)
       this->get_fracture_toughness =

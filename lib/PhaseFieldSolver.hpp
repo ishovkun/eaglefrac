@@ -400,7 +400,7 @@ assemble_system(const TrilinosWrappers::MPI::BlockVector &linerarization_point,
                                                     grad_phi_values);
 
       double G_c = data.get_fracture_toughness->value(cell->center(), 0);
-      // pcout << "g_c" << G_c << std::endl;
+      // pcout << "g_c " << G_c << std::endl;
 
       for (unsigned int q=0; q<n_q_points; ++q)
       {
@@ -493,7 +493,7 @@ assemble_system(const TrilinosWrappers::MPI::BlockVector &linerarization_point,
           double rhs_phi =
                   (1.-kappa)*phi_value*xi_phi[i]
                   *scalar_product(stress_tensor_plus, strain_tensor_value)
-                  - G_c/e*(1-phi_value)*xi_phi[i]
+                  - G_c/e*(1.-phi_value)*xi_phi[i]
                   + G_c*e
                     *scalar_product(grad_phi_values[q], grad_xi_phi[i]);
 
@@ -511,20 +511,26 @@ assemble_system(const TrilinosWrappers::MPI::BlockVector &linerarization_point,
                    *scalar_product(sigma_u_plus[j], eps_u[i])
                   + scalar_product(sigma_u_minus[j], eps_u[i]);
 
+              // old (from paper) - probably wrong
+              // double m_phi_u =
+              //         2.*(1.-kappa)*phi_value
+              //         *scalar_product(sigma_u_plus[j], strain_tensor_value)
+              //         *xi_phi[i];
+
+              // new
               double m_phi_u =
-                      2.*(1.-kappa)*phi_value
-                      *scalar_product(sigma_u_plus[j], strain_tensor_value)
-                      *xi_phi[i];
+                      (1.-kappa)*phi_value*
+                        (  scalar_product(sigma_u_plus[j], strain_tensor_value)
+                         + scalar_product(stress_tensor_plus, eps_u[j]))
+                        *xi_phi[i];
 
               // double m_u_phi = 0;
 
               double m_phi_phi =
                       (1.-kappa)*xi_phi[j]*xi_phi[i]
-                      *scalar_product(stress_tensor_plus, strain_tensor_value)
-                      +
-                      G_c/e*(xi_phi[j]*xi_phi[i])
-                      +
-                      G_c*e*scalar_product(grad_xi_phi[j], grad_xi_phi[i])
+                        *scalar_product(stress_tensor_plus, strain_tensor_value)
+                      + G_c/e*(xi_phi[j]*xi_phi[i])
+                      + G_c*e*scalar_product(grad_xi_phi[j], grad_xi_phi[i])
                       ;
 
               local_matrix(i, j) += (m_u_u + m_phi_u + m_phi_phi) * jxw;

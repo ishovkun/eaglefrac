@@ -152,6 +152,7 @@ namespace input_data {
     NotchedTestData();
     void compute_mesh_dependent_parameters(double);
     void read_input_file(std::string);
+    double get_time_step(const double);
 
   public:
     // BC's
@@ -164,7 +165,7 @@ namespace input_data {
     // Solver
     double newton_tolerance;
     int max_newton_iter;
-    double t_max, initial_time_step, minimum_time_step;
+    double t_max, minimum_time_step;
 
     // Mesh
     int initial_refinement_level, n_prerefinement_steps, n_adaptive_steps;
@@ -195,6 +196,7 @@ namespace input_data {
     // Bitmap
     std::string bitmap_file_name;
     std::vector< std::pair<double,double> > bitmap_range;
+    std::map<double, double> timestep_table;
   };
 
   template <int dim>
@@ -255,11 +257,11 @@ namespace input_data {
     }
     { // BC's
       prm.enter_subsection("Boundary conditions");
-      prm.declare_entry("Displacement boundary labels", "0, 2",
+      prm.declare_entry("Displacement boundary labels", "",
                     Patterns::List(Patterns::Integer()));
-      prm.declare_entry("Displacement boundary components", "1, 1",
+      prm.declare_entry("Displacement boundary components", "",
                     Patterns::List(Patterns::Integer(0, dim-1)));
-      prm.declare_entry("Displacement boundary velocities", "0, 0",
+      prm.declare_entry("Displacement boundary velocities", "",
                       Patterns::List(Patterns::Double()));
       prm.declare_entry("Displacement points", "", Patterns::Anything());
       prm.declare_entry("Displacement point components", "",
@@ -273,11 +275,11 @@ namespace input_data {
     { // equation data
       prm.enter_subsection("Equation data");
       // Constant parameters
-      prm.declare_entry("Young modulus", "1e10", Patterns::Double());
-      prm.declare_entry("Poisson ratio", "0.2", Patterns::Double(0, 0.5));
+      prm.declare_entry("Young modulus", "1", Patterns::Double());
+      prm.declare_entry("Poisson ratio", "0.3", Patterns::Double(0, 0.5));
       prm.declare_entry("Fracture toughness", "1e10", Patterns::Double());
       prm.declare_entry("Regularization kappa", "0", Patterns::Double());
-      prm.declare_entry("Regularization epsilon", "1, 1",
+      prm.declare_entry("Regularization epsilon", "2, 1",
                         Patterns::List(Patterns::Double()));
       prm.declare_entry("Penalization c", "10", Patterns::Double());
       // Uniformity boolian
@@ -285,11 +287,11 @@ namespace input_data {
       prm.declare_entry("Uniform Poisson ratio", "true", Patterns::Bool());
       prm.declare_entry("Uniform fracture toughness", "true", Patterns::Bool());
       // Heterogeneity limits
-      prm.declare_entry("Young modulus range", "1e10, 5e10",
+      prm.declare_entry("Young modulus range", "",
                         Patterns::List(Patterns::Double()));
-      prm.declare_entry("Poisson ratio range", "0.1, 0.5",
+      prm.declare_entry("Poisson ratio range", "",
                         Patterns::List(Patterns::Double(1e-3, 0.5)));
-      prm.declare_entry("Fracture toughness range", "1, 5",
+      prm.declare_entry("Fracture toughness range", "",
                         Patterns::List(Patterns::Double(0, 1e4)));
       // Files with homogeneous data
       prm.declare_entry("Bitmap file", "", Patterns::Anything());
@@ -300,7 +302,7 @@ namespace input_data {
     { // Solver
       prm.enter_subsection("Solver");
       prm.declare_entry("T max", "1", Patterns::Double());
-      prm.declare_entry("Initial time step", "1", Patterns::Double());
+      prm.declare_entry("Time stepping table", "(0, 1e-5)", Patterns::Anything());
       prm.declare_entry("Minimum time step", "1e-9", Patterns::Double());
       prm.declare_entry("Newton tolerance", "1e-9", Patterns::Double());
       prm.declare_entry("Max Newton steps", "20", Patterns::Integer());
@@ -380,6 +382,8 @@ void NotchedTestData<dim>::assign_parameters()
     std::vector<double> tmp =
       parse_string_list<double>(prm.get("Local refinement region"));
     local_prerefinement_region.resize(dim);
+    AssertThrow(tmp.size() == 2*dim,
+                ExcMessage("Wrong entry in Local refinement region"));
     local_prerefinement_region[0].first = tmp[0];
     local_prerefinement_region[0].second = tmp[1];
     local_prerefinement_region[1].first = tmp[2];
@@ -459,7 +463,11 @@ void NotchedTestData<dim>::assign_parameters()
   { // Solver
     prm.enter_subsection("Solver");
     this->t_max = prm.get_double("T max");
-    this->initial_time_step = prm.get_double("Initial time step");
+    std::vector<Point<2> > tmp =
+        parse_point_list<2>(prm.get("Time stepping table"));
+    for (const auto &row : tmp)
+      this->timestep_table[row[0]] = row[1];
+
     this->minimum_time_step = prm.get_double("Minimum time step");
     this->newton_tolerance = prm.get_double("Newton tolerance");
     this->max_newton_iter = prm.get_integer("Max Newton steps");
@@ -479,8 +487,6 @@ void NotchedTestData<dim>::assign_parameters()
     // loop through function names and assign the appropriate parameters
     for (unsigned int i=0; i<postprocessing_function_names.size(); i++)
     {
-      // std::cout << "Reading " << postprocessing_function_names[i] << std::endl;
-      // std::cout << "Args: " << tmp[i] << std::endl;
       std::vector<std::string> string_vector;
       std::vector< boost::variant<int, double, std::string> > args;
       boost::split(string_vector, tmp[i], boost::is_any_of(","));
@@ -521,5 +527,20 @@ void NotchedTestData<dim>::assign_parameters()
 
 }  // eom
 
+  template <int dim>
+  double NotchedTestData<dim>::get_time_step(const double time)
+  /* get value of the time step from the time-stepping table */
+  {
+    double time_step = timestep_table.rbegin()->second;
+    for (const auto &it : timestep_table)
+    {
+      if (time >= it.first)
+        time_step = it.second;
+      else
+        break;
+    }
+
+    return time_step;
+  }
 
 }  // end of namespace

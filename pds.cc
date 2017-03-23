@@ -192,15 +192,10 @@ namespace pds_solid
     // Point<dim> p(3e-3, 0.01), p1(3e-3, 0.01905);
     // pcout << "toughness " << data.get_fracture_toughness->value(p, 0) << std::endl;
     // pcout << "toughness1 " << data.get_fracture_toughness->value(p1, 0) << std::endl;
-    // pcout << " Yo!" << std::endl;
-    // pcout << data.displacement_point_velocities.size() << std::endl << std::flush;
-    // pcout << data.displacement_point_velocities[0];
-    // for (int i=0; i< data.constraint_point_phase_field.size(); ++i)
-    //   pcout << data.constraint_point_phase_field[i] << std::endl;
+
     // return;
 
     prepare_output_directories();
-    // return;
 
     // compute_runtime_parameters
     double minimum_mesh_size = Mesher::compute_minimum_mesh_size(triangulation,
@@ -227,19 +222,18 @@ namespace pds_solid
     phase_field_solver.solution.block(1) = 1;
     phase_field_solver.old_solution.block(1) = 1;
 
-    double time_step = data.initial_time_step;
-    double old_time_step = time_step;
-
     double time = 0;
+    double time_step = data.get_time_step(time);
+    double old_time_step = time_step;
     int time_step_number = 0;
+
     while(time < data.t_max)
     {
+      time_step = data.get_time_step(time);
       time += time_step;
       time_step_number++;
 
       phase_field_solver.update_old_solution();
-
-      double tmp_time_step = time_step;
 
     redo_time_step:
       pcout << std::endl
@@ -287,7 +281,6 @@ namespace pds_solid
         }  // end first newton step condition
 
         phase_field_solver.solve_newton_step(time_steps);
-        // if (time_step_number == 2) abort();
 
         // output_results(newton_step);
         newton_step++;
@@ -336,7 +329,6 @@ namespace pds_solid
       phase_field_solver.use_old_time_step_phi = true;
 
       old_time_step = time_step;
-      time_step = tmp_time_step;
 
       if (time >= data.t_max) break;
     }  // end time loop

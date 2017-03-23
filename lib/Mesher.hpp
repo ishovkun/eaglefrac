@@ -106,7 +106,7 @@ namespace Mesher {
 
   template <int dim>
   void refine_region(parallel::distributed::Triangulation<dim> &triangulation,
-                     const std::vector< std::pair<double,double> > region,
+                     const std::vector< std::pair<double,double> > &region,
                      const int n_refinement_cycles=1)
   {
     AssertThrow(region.size() == dim, ExcMessage("Dimension mismatch"));
@@ -120,20 +120,24 @@ namespace Mesher {
 
       for (; cell != endc; ++cell)
         if (cell->is_locally_owned())
-          if (
-            cell->face(2)->center()[0] > region[0].first
-            &&
-            cell->face(2)->center()[0] < region[0].second
-            &&
-            cell->face(0)->center()[1] > region[1].first
-            &&
-            cell->face(0)->center()[1] < region[1].second
+          for (unsigned int v=0; v<GeometryInfo<dim>::vertices_per_cell; ++v)
+            if (
+              cell->vertex(v)[0] > region[0].first
+              &&
+              cell->vertex(v)[0] < region[0].second
+              &&
+              cell->vertex(v)[1] > region[1].first
+              &&
+              cell->vertex(v)[1] < region[1].second
             )
-            cell->set_refine_flag();
+            {
+              cell->set_refine_flag();
+              break;
+            }
 
       triangulation.execute_coarsening_and_refinement();
     }  // end cycle loop
 
-  }
+  }  // eof
 
 }  // end of namespace

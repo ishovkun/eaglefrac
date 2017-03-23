@@ -52,8 +52,24 @@ print("Pmax", P_max)
 print("K_IC", K_IC)
 print("G_c", G)
 
+# values summary
+'''
+# Arc load
+phi     G_c
+5       0.27
+10      0.22
+15      0.29
+20      0.31
+30      0.23
 
-# plt.plot(t, np.sqrt(load_x**2 + load_y**2))
+# Point load
+phi     G_c
+5       0.49
+10      0.72
+20      0.65
+30      0.63
+'''
+
 plt.plot(t, load_y)
 # plt.xlim(0, 1e-2)
 # plt.ylim(0, 1e3)

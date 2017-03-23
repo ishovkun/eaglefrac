@@ -34,7 +34,7 @@ end
 
 
 subsection Solver
-  set Initial time step = 1e-5
+  set Time stepping table = (0, 1e-4); (0.006, 1e-5)
   set Max Newton steps  = 20
   set Minimum time step = 1e-9
   set Newton tolerance  = 1e-9

@@ -203,22 +203,22 @@ void PhaseFieldSolver<dim>::setup_dofs()
 
   // Partitioning
   { // compute owned dofs, owned partitioning, and relevant partitioning
-          locally_owned_dofs = dof_handler.locally_owned_dofs();
-          active_set.clear();
-          active_set.set_size(dof_handler.n_locally_owned_dofs());
+    locally_owned_dofs = dof_handler.locally_owned_dofs();
+    active_set.clear();
+    active_set.set_size(dof_handler.n_locally_owned_dofs());
 
-          owned_partitioning.clear();
-          owned_partitioning.resize(2);
-          owned_partitioning[0] = locally_owned_dofs.get_view(0, n_u);
-          owned_partitioning[1] = locally_owned_dofs.get_view(n_u, n_u+n_phi);
+    owned_partitioning.clear();
+    owned_partitioning.resize(2);
+    owned_partitioning[0] = locally_owned_dofs.get_view(0, n_u);
+    owned_partitioning[1] = locally_owned_dofs.get_view(n_u, n_u+n_phi);
 
-          DoFTools::extract_locally_relevant_dofs(dof_handler,
-                                                  locally_relevant_dofs);
+    DoFTools::extract_locally_relevant_dofs(dof_handler,
+                                            locally_relevant_dofs);
 
-          relevant_partitioning.clear();
-          relevant_partitioning.resize(2);
-          relevant_partitioning[0] = locally_relevant_dofs.get_view(0, n_u);
-          relevant_partitioning[1] = locally_relevant_dofs.get_view(n_u, n_u+n_phi);
+    relevant_partitioning.clear();
+    relevant_partitioning.resize(2);
+    relevant_partitioning[0] = locally_relevant_dofs.get_view(0, n_u);
+    relevant_partitioning[1] = locally_relevant_dofs.get_view(n_u, n_u+n_phi);
   }
 
   { // constraints

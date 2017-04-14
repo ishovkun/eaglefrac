@@ -1,0 +1,56 @@
+# Listing of Parameters
+# ---------------------
+subsection Boundary conditions
+  set Constraint point phase field     = 
+  set Displacement boundary components = 
+  set Displacement boundary labels     = 
+  set Displacement boundary velocities = 
+  set Displacement point components    = 
+  set Displacement point velocities    = 
+  set Displacement points              = 
+end
+
+
+subsection Equation data
+  set Bitmap file                = 
+  set Bitmap range               = 0, 1, 0, 1
+  set Fracture toughness         = 1e10
+  set Fracture toughness range   = 
+  set Penalization c             = 10
+  set Poisson ratio              = 0.3
+  set Poisson ratio range        = 
+  set Regularization epsilon     = 2, 1
+  set Regularization kappa       = 0
+  set Uniform Poisson ratio      = true
+  set Uniform Young modulus      = true
+  set Uniform fracture toughness = true
+  set Young modulus              = 1
+  set Young modulus range        = 
+end
+
+
+subsection Mesh
+  set Adaptive phi value              = 0
+  set Adaptive steps                  = 0
+  set Initial global refinement steps = 0
+  set Local refinement region         = 
+  set Local refinement steps          = 0
+  set Mesh file                       = 
+end
+
+
+subsection Postprocessing
+  set Arguments = 
+  set Functions = 
+end
+
+
+subsection Solver
+  set Max Newton steps    = 20
+  set Minimum time step   = 1e-9
+  set Newton tolerance    = 1e-9
+  set T max               = 1
+  set Time stepping table = (0, 1e-5)
+end
+
+

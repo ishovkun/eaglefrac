@@ -27,6 +27,7 @@ P_max = max(load_y)
 # main exp
 Y_I = 5.6 - 22.2*(a/r) + 166.9*(a/r)**2 - 576.2*(a/r)**3 + 928.8*(a/r)**4 - 505.9*(a/r)**5
 K_IC = P_max*sqrt(np.pi*a)/(2.*r*thick)*Y_I
+# print(Y_I)
 
 # third paper
 # Y_I = 4.782 + 1.219*(a/r) + 0.063*np.exp(7.045*(a/r))

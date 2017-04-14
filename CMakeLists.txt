@@ -29,13 +29,20 @@ DEAL_II_INITIALIZE_CACHED_VARIABLES()
 #SET(CLEAN_UP_FILES *.log *.gmv *.gnuplot *.gpl *.eps *.pov *.vtk *.ucd *.d2 *.vtu *.pvtu)
 PROJECT(ipds)
 
-INCLUDE_DIRECTORIES(${CMAKE_SOURCE_DIR}/lib)
-ADD_SUBDIRECTORY(lib)
+# lib
+INCLUDE_DIRECTORIES(${CMAKE_SOURCE_DIR}/src/lib)
+ADD_SUBDIRECTORY(src/lib)
 
-ADD_EXECUTABLE(pds ${CMAKE_SOURCE_DIR}/pds.cc)
-DEAL_II_SETUP_TARGET(pds)
+# targets
+ADD_EXECUTABLE(eaglefrac-solid ${CMAKE_SOURCE_DIR}/src/eaglefrac-solid.cc)
+DEAL_II_SETUP_TARGET(eaglefrac-solid)
 
-TARGET_LINK_LIBRARIES(pds lib boost_filesystem)
+ADD_EXECUTABLE(eaglefrac-pressurized ${CMAKE_SOURCE_DIR}/src/eaglefrac-pressurized.cc)
+DEAL_II_SETUP_TARGET(eaglefrac-pressurized)
+
+# linking
+TARGET_LINK_LIBRARIES(eaglefrac-solid lib boost_filesystem)
+TARGET_LINK_LIBRARIES(eaglefrac-pressurized lib boost_filesystem)
 
 SET_TARGET_PROPERTIES (
     lib

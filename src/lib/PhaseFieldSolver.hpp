@@ -61,6 +61,14 @@ void assemble_system(const TrilinosWrappers::MPI::BlockVector &,
 // more simple assembly function interface
 void assemble_system(const std::pair<double,double> &);
 
+// assmbly method for coupled (with pressure) system
+void
+assemble_coupled_system(const TrilinosWrappers::MPI::BlockVector &linerarization_point,
+												const TrilinosWrappers::MPI::BlockVector &pressure_relevant_solution,
+                				const std::pair<double,double> 					 &time_steps,
+                				bool 																		 include_pressure,
+                				bool 																		 assemble_matrix);
+
 double compute_nonlinear_residual(const TrilinosWrappers::MPI::BlockVector &,
                                   const std::pair<double, double> &);
 // simplified interface
@@ -81,6 +89,9 @@ void update_old_solution();
 bool active_set_changed(const IndexSet &) const;
 void truncate_phase_field();
 unsigned int active_set_size() const;
+void set_coupling(const DoFHandler<dim>            &,
+	           			const FESystem<dim>   					 &,
+						 			const FEValuesExtractors::Scalar &);
 
 private:
 // this function also computes finest mesh size
@@ -120,6 +131,12 @@ TrilinosWrappers::BlockSparseMatrix system_matrix;
 TrilinosWrappers::BlockSparseMatrix preconditioner_matrix;
 
 TrilinosWrappers::PreconditionAMG prec_displacement, prec_phase_field;
+
+// Pointers to couple with pore pressure
+// these are set by method set_coupling
+const DoFHandler<dim> *p_pressure_dof_handler;
+const FESystem<dim> *p_pressure_fe;
+const FEValuesExtractors::Scalar *p_pressure_extractor;
 
 
 public:
@@ -166,7 +183,7 @@ PhaseFieldSolver<dim>::~PhaseFieldSolver()
 template <int dim>
 void PhaseFieldSolver<dim>::setup_dofs()
 {
-  computing_timer.enter_section("Setup system");
+  computing_timer.enter_section("Setup phase-field system");
 
   // Displacements in block 0
   // phase-field in block 1
@@ -313,11 +330,27 @@ assemble_system(const std::pair<double,double> &time_steps)
 
 template <int dim>
 void PhaseFieldSolver<dim>::
-assemble_system(const TrilinosWrappers::MPI::BlockVector &linerarization_point,
-                const std::pair<double,double> &time_steps,
-                bool assemble_matrix)
+set_coupling(const DoFHandler<dim>            &pressure_dof_handler,
+	           const FESystem<dim>   						&pressure_fe,
+						 const FEValuesExtractors::Scalar &pressure_extractor)
 {
-  // AssertThrow(time_steps.size() == 2, ExcMessage("Pass only 2 time steps"));
+	p_pressure_fe = &pressure_fe;
+	p_pressure_dof_handler = &pressure_dof_handler;
+	p_pressure_extractor = &pressure_extractor;
+}  // eom
+
+
+template <int dim>
+void PhaseFieldSolver<dim>::
+assemble_coupled_system(const TrilinosWrappers::MPI::BlockVector &linerarization_point,
+												const TrilinosWrappers::MPI::BlockVector &pressure_relevant_solution,
+                				const std::pair<double,double> 					 &time_steps,
+                				bool 																		 include_pressure,
+                				bool 																		 assemble_matrix)
+{
+	if (include_pressure)
+		AssertThrow(p_pressure_dof_handler != NULL,
+		            ExcMessage("pointer to pressure dof_handler is null"));
 
   if (assemble_matrix)
     computing_timer.enter_section("Assemble system");
@@ -329,6 +362,15 @@ assemble_system(const TrilinosWrappers::MPI::BlockVector &linerarization_point,
                           update_values | update_gradients |
                           update_quadrature_points |
                           update_JxW_values);
+
+	// dummy unless include_pressure=true
+	FEValues<dim> *p_pressure_fe_values = NULL;
+	if (include_pressure)
+	{
+    p_pressure_fe_values = new  FEValues<dim>(*p_pressure_fe, quadrature_formula,
+	                     												update_values | update_gradients);
+
+	}
 
   const unsigned int dofs_per_cell = fe.dofs_per_cell;
   const unsigned int n_q_points    = quadrature_formula.size();
@@ -343,23 +385,28 @@ assemble_system(const TrilinosWrappers::MPI::BlockVector &linerarization_point,
 
   // FeValues containers
   std::vector< Tensor<2,dim> > eps_u(dofs_per_cell);
+  std::vector< Tensor<2,dim> > grad_xi_u(dofs_per_cell);
   std::vector< Tensor<1,dim> > grad_xi_phi(dofs_per_cell);
   std::vector< Tensor<1,dim> > grad_phi_values(n_q_points);
   std::vector<double> xi_phi(dofs_per_cell);
 
   // Solution values containers
-  std::vector< SymmetricTensor<2,dim> > strain_tensor_values(n_q_points);
+  std::vector< Tensor<2, dim> > grad_u_values(n_q_points);
   Tensor<2, dim> strain_tensor_value;
   std::vector<double> phi_values(n_q_points),
-  old_phi_values(n_q_points),
-  old_old_phi_values(n_q_points);
+  	old_phi_values(n_q_points),
+  	old_old_phi_values(n_q_points);
+
+	// std::vector
+	std::vector<double> pressure_values(n_q_points);
+	// std::vector< std::vector<double> > pressure_gradients(n_q_points,)
 
   // Stress decomposition containers
   ConstitutiveModel::EnergySpectralDecomposition<dim> stress_decomposition;
   Tensor<2, dim> stress_tensor_plus, stress_tensor_minus;
   std::vector< Tensor<2, dim> >
-  sigma_u_plus(dofs_per_cell),
-  sigma_u_minus(dofs_per_cell);
+  	sigma_u_plus(dofs_per_cell),
+  	sigma_u_minus(dofs_per_cell);
 
   // Equation data
   double kappa = data.regularization_parameter_kappa;
@@ -375,20 +422,25 @@ assemble_system(const TrilinosWrappers::MPI::BlockVector &linerarization_point,
   else
     residual = 0;
 
+	// Pressure cell is either taken from solid dof_handler (no pressure terms)
+	// or from pressure dof handler (include_pressure = true)
   typename DoFHandler<dim>::active_cell_iterator
-  cell = dof_handler.begin_active(),
-  endc = dof_handler.end();
+	  cell = dof_handler.begin_active(),
+	  pressure_cell = dof_handler.begin_active(),
+	  endc = dof_handler.end();
 
-  for (; cell!=endc; ++cell)
+	if (include_pressure)
+  	pressure_cell = p_pressure_dof_handler->begin_active();
+
+  for (; cell!=endc; ++cell, ++pressure_cell)
     if (cell->is_locally_owned())
     {
       local_rhs = 0;
       local_matrix = 0;
 
       fe_values.reinit(cell);
-
-      fe_values[displacement].get_function_symmetric_gradients
-              (relevant_solution, strain_tensor_values);
+			if (include_pressure)
+				p_pressure_fe_values->reinit(pressure_cell);
 
       fe_values[phase_field].get_function_values(relevant_solution,
                                                  phi_values);
@@ -398,6 +450,14 @@ assemble_system(const TrilinosWrappers::MPI::BlockVector &linerarization_point,
                                                  old_old_phi_values);
       fe_values[phase_field].get_function_gradients(relevant_solution,
                                                     grad_phi_values);
+			fe_values[displacement].get_function_gradients(relevant_solution,
+																										 grad_u_values);
+
+			if (include_pressure)
+			{
+				(*p_pressure_fe_values)[*p_pressure_extractor].get_function_values
+					(pressure_relevant_solution, pressure_values);
+			}
 
       double G_c = data.get_fracture_toughness->value(cell->center(), 0);
       // pcout << "g_c " << G_c << std::endl;
@@ -405,7 +465,8 @@ assemble_system(const TrilinosWrappers::MPI::BlockVector &linerarization_point,
       for (unsigned int q=0; q<n_q_points; ++q)
       {
         // convert from SymmetricTensor to Tensor
-        convert_to_tensor(strain_tensor_values[q], strain_tensor_value);
+        // convert_to_tensor(strain_tensor_values[q], strain_tensor_value);
+				strain_tensor_value = 0.5*(grad_u_values[q] + transpose(grad_u_values[q]));
 
         // Simple splitting
         // stress_decomposition.get_stress_decomposition(strain_tensor_value,
@@ -551,7 +612,7 @@ assemble_system(const TrilinosWrappers::MPI::BlockVector &linerarization_point,
                                                              local_dof_indices,
                                                              residual);
 
-  } // end of cell loop
+    } // end of cell loop
 
   if (assemble_matrix)
   {
@@ -565,6 +626,30 @@ assemble_system(const TrilinosWrappers::MPI::BlockVector &linerarization_point,
 
   if (assemble_matrix)
     setup_preconditioners();
+
+
+  delete p_pressure_fe_values;
+}  // eom
+
+template <int dim>
+void PhaseFieldSolver<dim>::
+assemble_system(const TrilinosWrappers::MPI::BlockVector &linerarization_point,
+                const std::pair<double,double> &time_steps,
+                bool assemble_matrix)
+{
+	/* This funciton is for the assembly of only the solid system (with no fluid)
+	It calls a generic function that assembles the coupled system but with dummy
+	pressure variables and a false include_pressure flag. */
+
+	// First create dummy variables to pass to the coupled (with pressure) generic
+	// funciton
+	TrilinosWrappers::MPI::BlockVector dummy_pressure_vector;
+
+	assemble_coupled_system(linerarization_point,
+													dummy_pressure_vector,
+													time_steps,
+													/*include pressure = */ false,
+													assemble_matrix);
 
 }   // EOM
 

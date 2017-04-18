@@ -287,9 +287,7 @@ namespace pds_solid
         phase_field_solver.solve_newton_step(time_steps);
 
         // output_results(newton_step);
-        newton_step++;
 
-        pcout << std::endl;
       }  // End Newton iter
 
       // cut the time step if no convergence

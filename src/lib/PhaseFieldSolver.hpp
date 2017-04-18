@@ -83,7 +83,7 @@ void impose_displacement(const std::vector<int>          &,
                          const std::vector<int>          &,
                          const std::vector<double>        &,
                          const std::vector<bool>          &);
-void solve();
+unsigned int solve();
 void solve_newton_step(const std::pair<double,double> &time_steps);
 void update_old_solution();
 bool active_set_changed(const IndexSet &) const;
@@ -92,6 +92,7 @@ unsigned int active_set_size() const;
 void set_coupling(const DoFHandler<dim>            &,
 	           			const FESystem<dim>   					 &,
 						 			const FEValuesExtractors::Scalar &);
+double linear_residual(TrilinosWrappers::MPI::BlockVector &);
 
 private:
 // this function also computes finest mesh size
@@ -320,6 +321,16 @@ void convert_to_tensor(const SymmetricTensor<2, dim> &symm_tensor,
 }    // EOM
 
 
+template <int dim> inline
+double sum(const Tensor<1, dim> &t)
+{
+	double s = 0;
+  for (int i=0; i<dim; ++i)
+		s += t[i];
+	return s;
+}    // EOM
+
+
 template <int dim>
 void PhaseFieldSolver<dim>::
 assemble_system(const std::pair<double,double> &time_steps)
@@ -366,11 +377,8 @@ assemble_coupled_system(const TrilinosWrappers::MPI::BlockVector &linerarization
 	// dummy unless include_pressure=true
 	FEValues<dim> *p_pressure_fe_values = NULL;
 	if (include_pressure)
-	{
-    p_pressure_fe_values = new  FEValues<dim>(*p_pressure_fe, quadrature_formula,
+    p_pressure_fe_values = new FEValues<dim>(*p_pressure_fe, quadrature_formula,
 	                     												update_values | update_gradients);
-
-	}
 
   const unsigned int dofs_per_cell = fe.dofs_per_cell;
   const unsigned int n_q_points    = quadrature_formula.size();
@@ -388,14 +396,14 @@ assemble_coupled_system(const TrilinosWrappers::MPI::BlockVector &linerarization
   std::vector< Tensor<2,dim> > grad_xi_u(dofs_per_cell);
   std::vector< Tensor<1,dim> > grad_xi_phi(dofs_per_cell);
   std::vector< Tensor<1,dim> > grad_phi_values(n_q_points);
-  std::vector<double> xi_phi(dofs_per_cell);
+  std::vector<double>  				 xi_phi(dofs_per_cell);
 
   // Solution values containers
   std::vector< Tensor<2, dim> > grad_u_values(n_q_points);
-  Tensor<2, dim> strain_tensor_value;
-  std::vector<double> phi_values(n_q_points),
-  	old_phi_values(n_q_points),
-  	old_old_phi_values(n_q_points);
+  Tensor<2, dim> 								strain_tensor_value;
+  std::vector<double> 					phi_values(n_q_points),
+						  									old_phi_values(n_q_points),
+						  									old_old_phi_values(n_q_points);
 
 	// std::vector
 	std::vector<double> pressure_values(n_q_points);
@@ -507,12 +515,13 @@ assemble_coupled_system(const TrilinosWrappers::MPI::BlockVector &linerarization
 
         for (unsigned int k=0; k<dofs_per_cell; ++k)
         {
-          xi_phi[k] = fe_values[phase_field].value(k,q);
+          xi_phi[k]      = fe_values[phase_field].value(k,q);
           grad_xi_phi[k] = fe_values[phase_field].gradient(k, q);
+					grad_xi_u[k]   = fe_values[displacement].gradient(k, q);
 
           if (assemble_matrix)
           {
-            eps_u[k] = fe_values[displacement].symmetric_gradient(k, q);
+						eps_u[k] = 0.5*(grad_xi_u[k] + transpose(grad_xi_u[k]));
 
             // No decomposition
             // sigma_u_plus[k] =
@@ -550,6 +559,11 @@ assemble_coupled_system(const TrilinosWrappers::MPI::BlockVector &linerarization
                   ((1.-kappa)*phi_tilda*phi_tilda + kappa)
                     *scalar_product(stress_tensor_plus, eps_u[i])
                   + scalar_product(stress_tensor_minus, eps_u[i]);
+				  if (include_pressure)
+						rhs_u +=
+							-(data.biot_coef-1.0)*phi_tilda*phi_tilda*pressure_values[q]*
+							// trace(grad_xi_u[i]);
+							(grad_xi_u[i][0][0] + grad_xi_u[i][1][1]);
 
           double rhs_phi =
                   (1.-kappa)*phi_value*xi_phi[i]
@@ -557,6 +571,11 @@ assemble_coupled_system(const TrilinosWrappers::MPI::BlockVector &linerarization
                   - G_c/e*(1.-phi_value)*xi_phi[i]
                   + G_c*e
                     *scalar_product(grad_phi_values[q], grad_xi_phi[i]);
+				  if (include_pressure)
+						rhs_phi +=
+							-2.0*(data.biot_coef-1.0)*phi_value*pressure_values[q] *
+							// trace(grad_u_values[q])*xi_phi[i];
+							(grad_u_values[q][0][0] + grad_u_values[q][1][1])*xi_phi[i];
 
           local_rhs[i] -= (rhs_u + rhs_phi)*jxw;
 
@@ -584,15 +603,24 @@ assemble_coupled_system(const TrilinosWrappers::MPI::BlockVector &linerarization
                         (  scalar_product(sigma_u_plus[j], strain_tensor_value)
                          + scalar_product(stress_tensor_plus, eps_u[j]))
                         *xi_phi[i];
+							if (include_pressure)
+								m_phi_u +=
+									-2.0*(data.biot_coef-1.0)*pressure_values[q]*
+									// phi_value*trace(grad_xi_u[j])*xi_phi[i];
+									phi_value*(grad_xi_u[j][0][0] + grad_xi_u[j][1][1])*xi_phi[i];
 
               // double m_u_phi = 0;
 
               double m_phi_phi =
-                      (1.-kappa)*xi_phi[j]*xi_phi[i]
-                        *scalar_product(stress_tensor_plus, strain_tensor_value)
-                      + G_c/e*(xi_phi[j]*xi_phi[i])
-                      + G_c*e*scalar_product(grad_xi_phi[j], grad_xi_phi[i])
-                      ;
+                (1.-kappa)*xi_phi[j]*xi_phi[i]
+                  *scalar_product(stress_tensor_plus, strain_tensor_value)
+                + G_c/e*(xi_phi[j]*xi_phi[i])
+                + G_c*e*scalar_product(grad_xi_phi[j], grad_xi_phi[i]);
+							if (include_pressure)
+								m_phi_phi +=
+									-2.0*(data.biot_coef-1.0)*pressure_values[q]*
+									// trace(grad_u_values[q])*xi_phi[j]*xi_phi[i];
+									(grad_u_values[q][0][0] + grad_u_values[q][1][1])*xi_phi[j]*xi_phi[i];
 
               local_matrix(i, j) += (m_u_u + m_phi_u + m_phi_phi) * jxw;
 
@@ -626,7 +654,6 @@ assemble_coupled_system(const TrilinosWrappers::MPI::BlockVector &linerarization
 
   if (assemble_matrix)
     setup_preconditioners();
-
 
   delete p_pressure_fe_values;
 }  // eom
@@ -798,12 +825,11 @@ solve_newton_step(const std::pair<double,double> &time_steps)
     solve();
 
     // line search
-    // relevant_solution = solution;  // store solution
     TrilinosWrappers::MPI::BlockVector tmp_vector = solution;
     double old_error = compute_nonlinear_residual(solution, time_steps);
     const int max_steps = 10;
     double damping = 0.6;
-    for(int step = 0; step < max_steps; ++step)
+    for (int step = 0; step < max_steps; ++step)
     {
       solution += solution_update;
       compute_nonlinear_residual(solution, time_steps);
@@ -845,8 +871,8 @@ double PhaseFieldSolver<dim>::
 compute_nonlinear_residual(const TrilinosWrappers::MPI::BlockVector &linerarization_point,
                            const std::pair<double,double> &time_steps)
 {
-        assemble_system(linerarization_point, time_steps, false);
-        return residual.l2_norm();
+  assemble_system(linerarization_point, time_steps, false);
+  return residual.l2_norm();
 }    // EOM
 
 
@@ -854,14 +880,14 @@ template <int dim>
 double PhaseFieldSolver<dim>::
 compute_nonlinear_residual(const std::pair<double,double> &time_steps)
 {
-        return compute_nonlinear_residual(solution, time_steps);
+  return compute_nonlinear_residual(solution, time_steps);
 }    // EOM
 
 
 template <int dim>
 double PhaseFieldSolver<dim>::residual_norm() const
 {
-        return residual.l2_norm();
+  return residual.l2_norm();
 }    // eom
 
 
@@ -1085,43 +1111,48 @@ void PhaseFieldSolver<dim>::setup_preconditioners()
 
 
 template <int dim>
-void PhaseFieldSolver<dim>::solve()
+unsigned int PhaseFieldSolver<dim>::solve()
 {
-        /*
-           In this method we essentially use 2 block diagonal preconditioners
-           for the block (0,0) and the block (1, 1)
-         */
-        computing_timer.enter_section("Solve phase-field system");
+  /*
+     In this method we essentially use 2 block diagonal preconditioners
+     for the block (0,0) and the block (1, 1)
+   */
+  computing_timer.enter_section("Solve phase-field system");
 
-        // Construct block preconditioner (for the whole matrix)
-        const LinearSolvers::
-        BlockDiagonalPreconditioner<TrilinosWrappers::PreconditionAMG,
-                                    TrilinosWrappers::PreconditionAMG>
-        preconditioner(prec_displacement, prec_phase_field);
+  // Construct block preconditioner (for the whole matrix)
+  const LinearSolvers::
+  BlockDiagonalPreconditioner<TrilinosWrappers::PreconditionAMG,
+                              TrilinosWrappers::PreconditionAMG>
+  preconditioner(prec_displacement, prec_phase_field);
 
-        // set up the linear solver and solve the system
-        unsigned int max_iter = system_matrix.m();
-        // pcout << "rhs norm" << rhs_vector.l2_norm() << "\t";
-        // double tol = std::max(1e-10*rhs_vector.l2_norm(), 1e-14);
-        double tol = 1e-10*rhs_vector.l2_norm();
-        SolverControl solver_control(max_iter, tol);
+  // set up the linear solver and solve the system
+  unsigned int max_iter = system_matrix.m();
+  // pcout << "rhs norm" << rhs_vector.l2_norm() << "\t";
+  // double tol = std::max(1e-10*rhs_vector.l2_norm(), 1e-14);
+  double tol = 1e-10*rhs_vector.l2_norm();
+  SolverControl solver_control(max_iter, tol);
 
-        // SolverFGMRES<TrilinosWrappers::MPI::BlockVector>
-        SolverGMRES<TrilinosWrappers::MPI::BlockVector>
-        solver(solver_control);
+  // SolverFGMRES<TrilinosWrappers::MPI::BlockVector>
+  SolverGMRES<TrilinosWrappers::MPI::BlockVector>
+  solver(solver_control);
 
-        // all_constraints.set_zero(solution_update);
-        // hanging_nodes_constraints.set_zero(solution_update);
-        // hanging_nodes_constraints.set_zero(rhs_vector);
-        solver.solve(system_matrix, solution_update,
-                     rhs_vector, preconditioner);
+  solver.solve(system_matrix, solution_update,
+               rhs_vector, preconditioner);
 
-        pcout << "GMRES: " << solver_control.last_step() << "\t";
+  all_constraints.distribute(solution_update);
 
-        all_constraints.distribute(solution_update);
+  computing_timer.exit_section();
 
-        computing_timer.exit_section();
-
+	return solver_control.last_step();
 }    // EOM
+
+
+template <int dim>
+double
+PhaseFieldSolver<dim>::
+linear_residual(TrilinosWrappers::MPI::BlockVector &dst)
+{
+	return system_matrix.residual(dst, solution_update, rhs_vector);
+}
 
 }  // end of namespace

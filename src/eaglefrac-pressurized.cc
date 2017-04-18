@@ -1,8 +1,11 @@
 #include <deal.II/base/utilities.h>
 #include <deal.II/grid/grid_generator.h>
+#include <deal.II/base/function.h>
+#include <deal.II/base/point.h>
 #include <deal.II/numerics/data_out.h>
 #include <deal.II/distributed/solution_transfer.h>
 #include <deal.II/grid/grid_in.h>
+#include <deal.II/numerics/vector_tools.h>
 
 #include <limits>       // std::numeric_limits
 
@@ -18,7 +21,73 @@
 
 namespace pds_solid
 {
-  using namespace dealii;
+	using namespace dealii;
+
+	// Initial phase-field distribution
+	template <int dim>
+	class InitialValues : public Function<dim>
+	{
+	public:
+		InitialValues(const double minimum_mesh_size);
+
+		virtual double value(const Point<dim> &p,
+												 const unsigned int component = 0) const;
+		virtual void vector_value(const Point<dim> &p,
+															Vector<double> &value) const;
+
+	private:
+		double min_size;
+	};  // end class declaration
+
+
+	template <int dim>
+	InitialValues<dim>::InitialValues(const double minimum_mesh_size)
+		:
+		Function<dim>(dim+1),
+		min_size(minimum_mesh_size)
+	{}  // eom
+
+	template <int dim>
+	double InitialValues<dim>::value(const Point<dim> &p,
+																	 const unsigned int component) const
+	{
+		double width = min_size;
+		double height = min_size;
+
+		double left = 0.4 - width;
+		double right = 0.6 + width;
+		double top = 0.5 + height;
+		double bottom = 0.5 - height;
+		// std::cout << "b " << bottom << std::endl;
+		if (component == dim)
+		{
+			if (   (p(0) >= left)
+			    && (p(0) <= right)
+			 		&& (p(1) >= bottom)
+			 		&& (p(1) <= top))
+			{
+				// std::cout << "pf" << std::endl;
+				return 0.0;
+			}
+			else
+				return 1.0;
+		}
+		// std::cout << "disp" << std::endl;
+		return 0.0;
+	}  // eom
+
+
+	template <int dim>
+	void
+	InitialValues<dim>::vector_value(const Point<dim> &p,
+																	 Vector<double>   &values) const
+	{
+		// for (unsigned int comp = 0; comp < this->n_components; ++comp)
+		for (unsigned int comp = 0; comp < dim+1; ++comp)
+			values(comp) = InitialValues<dim>::value(p, comp);
+			// values(comp) = this->value(p, comp);
+	}  // eom
+
 
 
   template <int dim>
@@ -40,6 +109,7 @@ namespace pds_solid
     void execute_postprocessing(const double time);
     void exectute_adaptive_refinement();
     void prepare_output_directories();
+		void print_header();
 
     MPI_Comm mpi_communicator;
 
@@ -222,12 +292,25 @@ namespace pds_solid
 
 
   template <int dim>
+  void PDSSolid<dim>::print_header()
+	{
+		pcout << "Iter #" << "\t"
+		      << "ASet" << "\t"
+		      << "error" << "\t\t"
+		      << "GMRES" << "\t"
+		      << "LSearch" << "\t"
+					<< std::endl;
+	}
+
+
+  template <int dim>
   void PDSSolid<dim>::run()
   {
     data.read_input_file(input_file_name);
     read_mesh();
 
     // debug input
+		data.biot_coef = 0.8;
     // Point<dim> p(3e-3, 0.01), p1(3e-3, 0.01905);
     // pcout << "toughness " << data.get_fracture_toughness->value(p, 0) << std::endl;
     // pcout << "toughness1 " << data.get_fracture_toughness->value(p1, 0) << std::endl;
@@ -236,7 +319,7 @@ namespace pds_solid
 		// pcout << data.displacement_boundary_velocities[0]*1 << std::endl;
     // return;
 
-    // prepare_output_directories();
+    prepare_output_directories();
 		//
     // compute_runtime_parameters
     double minimum_mesh_size = Mesher::compute_minimum_mesh_size(triangulation,
@@ -259,136 +342,194 @@ namespace pds_solid
 
     setup_dofs();
 
-    // set initial phase-field to 1
-    phase_field_solver.solution.block(1) = 1;
-    phase_field_solver.old_solution.block(1) = 1;
-
-		pressure_owned_solution = 1;
-		pressure_relevant_solution = pressure_owned_solution;
-
+		// point phase_field_solver to pressure objects
   	const FEValuesExtractors::Scalar pressure_extractor(0);
 		phase_field_solver.set_coupling(pressure_dof_handler,
 																	  pressure_fe,
 																		pressure_extractor);
 
-    std::pair<double,double> time_steps = std::make_pair(0.0, 0.0);
-    phase_field_solver.assemble_coupled_system(phase_field_solver.solution,
-																							 pressure_relevant_solution,
-																							 time_steps,
-																							 true, true);
-		//
-    // double time = 0;
-    // double time_step = data.get_time_step(time);
-    // double old_time_step = time_step;
-    // int time_step_number = 0;
-		//
-    // while(time < data.t_max)
-    // {
-    //   time_step = data.get_time_step(time);
-    //   time += time_step;
-    //   time_step_number++;
-		//
-    //   phase_field_solver.update_old_solution();
-		//
-    // redo_time_step:
-    //   pcout << std::endl
-    //         << "Time: "
-    //         << std::defaultfloat << time
-		// 				<< "\tStep:"
-		// 				<< time_step
-    //         << std::endl;
-		//
-    //   impose_displacement_on_solution(time);
-    //   std::pair<double,double> time_steps = std::make_pair(time_step, old_time_step);
-		//
-    //   IndexSet old_active_set(phase_field_solver.active_set);
-		//
-    //   int newton_step = 0;
-    //   const double newton_tolerance = data.newton_tolerance;
-    //   while (newton_step < data.max_newton_iter)
-    //   {
-    //     pcout << "Newton iteration: " << newton_step << "\t";
-		//
-    //     double error;
-    //     if (newton_step > 0)
-    //     {
-    //       phase_field_solver.
-    //         compute_nonlinear_residual(phase_field_solver.solution,
-    //                                    time_steps);
-		//
-    //       phase_field_solver.compute_active_set(phase_field_solver.solution);
-    //       phase_field_solver.all_constraints.set_zero(phase_field_solver.residual);
-		//
-    //       pcout << "Active set: "
-    //             << phase_field_solver.active_set_size()
-    //             << "\t";
-    //       error = phase_field_solver.residual_norm();
-    //       pcout << std::scientific << "error = " << error << "\t";
-    //       std::cout.unsetf(std::ios_base::scientific);
-		//
-    //       // break condition
-    //       if (phase_field_solver.active_set_changed(old_active_set) &&
-    //           error < newton_tolerance)
-    //       {
-    //         pcout << "Converged!" << std::endl;
-    //         break;
-    //       }
-		//
-    //       old_active_set = phase_field_solver.active_set;
-    //     }  // end first newton step condition
-		//
-    //     phase_field_solver.solve_newton_step(time_steps);
-		//
-    //     // output_results(newton_step);
-    //     newton_step++;
-		//
-    //     pcout << std::endl;
-    //   }  // End Newton iter
-		//
-    //   // cut the time step if no convergence
-    //   if (newton_step == data.max_newton_iter)
-    //   {
-    //     pcout << "Time step didn't converge: reducing to dt = "
-    //           << time_step/10 << std::endl;
-    //     if (time_step/10 < data.minimum_time_step)
-    //     {
-    //       pcout << "Time step too small: aborting" << std::endl;
-    //       std::cout.unsetf(std::ios_base::scientific);
-    //       throw SolverControl::NoConvergence(0, 0);
-    //     }
-		//
-    //     time -= time_step;
-    //     time_step /= 10.0;
-    //     time += time_step;
-    //     phase_field_solver.solution = phase_field_solver.old_solution;
-    //     phase_field_solver.use_old_time_step_phi = true;
-    //     goto redo_time_step;
-    //   }
-		//
-    //   // do adaptive refinement if needed
-    //   if (data.n_adaptive_steps > 0)
-    //     if (Mesher::prepare_phase_field_refinement(phase_field_solver,
-    //                                                data.phi_refinement_value,
-    //                                                max_refinement_level))
-    //     {
-    //       pcout << std::endl
-    //            << "Adapting mesh"
-    //            << std::endl;
-    //       exectute_adaptive_refinement();
-    //       goto redo_time_step;
-    //     }
-		//
-    //   phase_field_solver.truncate_phase_field();
-    //   output_results(time_step_number);
-    //   execute_postprocessing(time);
-    //   // return;
-		//
-    //   phase_field_solver.use_old_time_step_phi = true;
-		//
-    //   old_time_step = time_step;
-		//
-    //   if (time >= data.t_max) break;
-    // }  // end time loop
+    // Initial values
+		VectorTools::interpolate(phase_field_solver.dof_handler,
+														 InitialValues<dim>(minimum_mesh_size),
+														 phase_field_solver.solution);
+	  // return;
+    // phase_field_solver.solution.block(1) = 1;
+    // phase_field_solver.solution.block(0) = 0;
+    phase_field_solver.old_solution.block(1) = phase_field_solver.solution.block(1);
+
+    double time = 0;
+    double time_step = data.get_time_step(time);
+    double old_time_step = time_step;
+    int time_step_number = 0;
+
+    while(time < data.t_max)
+    {
+      time_step = data.get_time_step(time);
+      time += time_step;
+      time_step_number++;
+
+      phase_field_solver.update_old_solution();
+
+    redo_time_step:
+      pcout << std::endl
+            << "Time: "
+            << std::defaultfloat << time
+						<< "\tStep:"
+						<< time_step
+            << std::endl;
+
+			pressure_owned_solution = (time_step_number > 1) ? 1e3*time: 0.0;
+			pressure_relevant_solution = pressure_owned_solution;
+
+      impose_displacement_on_solution(time);
+      std::pair<double,double> time_steps = std::make_pair(time_step, old_time_step);
+
+      IndexSet old_active_set(phase_field_solver.active_set);
+
+			print_header();
+      int newton_step = 0;
+      const double newton_tolerance = data.newton_tolerance;
+      while (newton_step < data.max_newton_iter)
+      {
+        // pcout << "Newton iteration: " << newton_step << "\t";
+				pcout << newton_step << "\t";
+
+        double error = std::numeric_limits<double>::max();
+        if (newton_step > 0)
+        {
+					// compute residual
+			    phase_field_solver.assemble_coupled_system(phase_field_solver.solution,
+																										 pressure_relevant_solution,
+																										 time_steps,
+																										 /*include_pressure = */ true,
+																										 /*assemble_matrix = */ false);
+          phase_field_solver.compute_active_set(phase_field_solver.solution);
+          phase_field_solver.all_constraints.set_zero(phase_field_solver.residual);
+          error = phase_field_solver.residual_norm();
+
+					// print active set and error
+          pcout << phase_field_solver.active_set_size()
+								<< "\t";
+					std::cout.precision(3);
+          pcout << std::scientific << error << "\t";
+          std::cout.unsetf(std::ios_base::scientific);
+
+          // break condition
+          if (phase_field_solver.active_set_changed(old_active_set) &&
+              error < newton_tolerance)
+          {
+            pcout << "Converged!" << std::endl;
+            break;
+          }
+
+          old_active_set = phase_field_solver.active_set;
+        }  // end first newton step condition
+
+				{ // Solve newton step
+        	// phase_field_solver.solve_newton_step(time_steps);
+			    phase_field_solver.assemble_coupled_system(phase_field_solver.solution,
+																										 pressure_relevant_solution,
+																										 time_steps,
+																										 /*include_pressure = */ true,
+																										 /*assemble_matrix = */ true);
+          unsigned int n_gmres = phase_field_solver.solve();
+
+					// compute linear residual for debugging
+					// TrilinosWrappers::MPI::BlockVector norm = phase_field_solver.solution;
+					// double eeee = phase_field_solver.linear_residual(norm);
+					// pcout << "\nerrrror " << eeee << std::endl;
+
+					pcout << n_gmres << "\t";
+
+					// line search
+					TrilinosWrappers::MPI::BlockVector tmp_vector = phase_field_solver.solution;
+
+					const int max_steps = 10;
+					double damping = 0.6;
+					int n_steps = 0;
+					for (int step = 0; step < max_steps; ++step)
+					{
+						// pcout << "\nstep " << step << "\t";
+						n_steps += 1;
+
+						phase_field_solver.solution += phase_field_solver.solution_update;
+						// compute new norm
+						phase_field_solver.assemble_coupled_system(phase_field_solver.solution,
+																											 pressure_relevant_solution,
+																											 time_steps,
+																											 /*include_pressure = */ true,
+																											 /*assemble_matrix = */ false);
+						phase_field_solver.all_constraints.set_zero(phase_field_solver.residual);
+						double lin_search_error = phase_field_solver.residual_norm();
+						// pcout << "Line search error " << lin_search_error << std::endl;
+
+						// if (lin_search_error < old_error)
+						if (lin_search_error < error)
+						{
+							break;
+						}
+
+						// if (step < max_steps)
+						// {
+							phase_field_solver.solution = tmp_vector;
+							phase_field_solver.solution_update *= damping;
+						// }
+					} // end line search
+					pcout << n_steps << "\t";
+				}  // end solve
+
+        // output_results(newton_step);
+        newton_step++;
+
+        pcout << std::endl;
+      }  // End Newton iter
+
+      // cut the time step if no convergence
+      if (newton_step == data.max_newton_iter)
+      {
+        pcout << "Time step didn't converge: reducing to dt = "
+              << time_step/10 << std::endl;
+        if (time_step/10 < data.minimum_time_step)
+        {
+          pcout << "Time step too small: aborting" << std::endl;
+          std::cout.unsetf(std::ios_base::scientific);
+          throw SolverControl::NoConvergence(0, 0);
+        }
+
+        time -= time_step;
+        time_step /= 10.0;
+        time += time_step;
+        phase_field_solver.solution = phase_field_solver.old_solution;
+        phase_field_solver.use_old_time_step_phi = true;
+        goto redo_time_step;
+      }  // end cut time step
+
+      // do adaptive refinement if needed
+      if (data.n_adaptive_steps > 0)
+        if (Mesher::prepare_phase_field_refinement(phase_field_solver,
+                                                   data.phi_refinement_value,
+                                                   max_refinement_level))
+        {
+          pcout << std::endl
+               << "Adapting mesh"
+               << std::endl
+							 << "Redo time step"
+               << std::endl;
+          exectute_adaptive_refinement();
+          goto redo_time_step;
+        }
+
+      phase_field_solver.truncate_phase_field();
+      output_results(time_step_number);
+      execute_postprocessing(time);
+      // return;
+
+      phase_field_solver.use_old_time_step_phi = true;
+
+      old_time_step = time_step;
+
+      if (time >= data.t_max) break;
+    }  // end time loop
 
     // pcout << std::fixed;
     // show timer table in default format

@@ -8,12 +8,12 @@ end
 
 
 subsection Equation data
-  set Fracture toughness         = 2.7
+  set Fracture toughness         = 1
   set Young modulus              = 210000
   set Poisson ratio              = 0.3
   set Regularization epsilon     = 5, 1
   set Regularization kappa       = 1e-10
-  set Penalization c             = 100
+  set Penalization c             = 1e3
   set Uniform Poisson ratio      = true
   set Uniform Young modulus      = true
   set Uniform fracture toughness = true
@@ -23,8 +23,8 @@ end
 
 
 subsection Mesh
-  set Initial global refinement steps = 2
-  set Local refinement steps          = 2
+  set Initial global refinement steps = 4
+  set Local refinement steps          = 0
   set Local refinement region         = 0.4, 0.6, 0.45, 0.6
   set Adaptive steps                  = 2  
   set Adaptive phi value              = 0.6
@@ -33,11 +33,11 @@ end
 
 
 subsection Solver
-  set Time stepping table = (0, 1e-4); (0.006, 1e-5)
+  set Time stepping table = (0, 1e-2);
   set Max Newton steps  = 20
   set Minimum time step = 1e-9
   set Newton tolerance  = 1e-9
-  set T max             = 0.01
+  set T max             = 10
 end
 
 subsection Postprocessing

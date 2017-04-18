@@ -466,14 +466,12 @@ namespace pds_solid
 						// if (lin_search_error < old_error)
 						if (lin_search_error < error)
 						{
+							// pcout << "\nBreaking LoL" << std::endl;
 							break;
 						}
-
-						// if (step < max_steps)
-						// {
-							phase_field_solver.solution = tmp_vector;
-							phase_field_solver.solution_update *= damping;
-						// }
+						// pcout << "I'm broke" << std::endl;
+						phase_field_solver.solution = tmp_vector;
+						phase_field_solver.solution_update *= damping;
 					} // end line search
 					pcout << n_steps << "\t";
 				}  // end solve

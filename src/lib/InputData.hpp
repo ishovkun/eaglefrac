@@ -10,7 +10,7 @@
 #include <BitMap.hpp>
 
 
-namespace input_data {
+namespace InputData {
   using namespace dealii;
 
   template<typename T>
@@ -146,10 +146,10 @@ namespace input_data {
   };
 
   template <int dim>
-  class NotchedTestData : public PhaseFieldData<dim>
+  class PhaseFieldSolidData : public PhaseFieldData<dim>
   {
   public:
-    NotchedTestData();
+    PhaseFieldSolidData(ConditionalOStream &pcout_);
     void compute_mesh_dependent_parameters(double);
     void read_input_file(std::string);
     double get_time_step(const double);
@@ -181,13 +181,16 @@ namespace input_data {
       postprocessing_function_args;
 
 
-  private:
+  protected:
     void declare_parameters();
     void compute_runtime_parameters();
     void assign_parameters();
     void check_input();
 
     ParameterHandler prm;
+		ConditionalOStream &pcout;
+
+	protected:
     bool uniform_fracture_toughness, uniform_young_modulus;
     // Properties
     double fracture_toughness_constant;
@@ -200,15 +203,16 @@ namespace input_data {
   };
 
   template <int dim>
-  NotchedTestData<dim>::NotchedTestData()
+  PhaseFieldSolidData<dim>::PhaseFieldSolidData(ConditionalOStream &pcout_)
+	:
+	pcout(pcout_)
   {
     declare_parameters();
-
   }  // EOM
 
 
   template <int dim>
-  void NotchedTestData<dim>::compute_runtime_parameters()
+  void PhaseFieldSolidData<dim>::compute_runtime_parameters()
   {
     double E = this->young_modulus;
     double nu = this->poisson_ratio;
@@ -231,7 +235,7 @@ namespace input_data {
   }  // eom
 
   template <int dim>
-  void NotchedTestData<dim>::
+  void PhaseFieldSolidData<dim>::
   compute_mesh_dependent_parameters(double mesh_size)
   {
     this->regularization_parameter_epsilon =
@@ -242,8 +246,9 @@ namespace input_data {
 
 
   template <int dim>
-  void NotchedTestData<dim>::declare_parameters()
+  void PhaseFieldSolidData<dim>::declare_parameters()
   {
+		// pcout << "Declaring shit 1" << std::endl;
     { // Mesh
       prm.enter_subsection("Mesh");
       prm.declare_entry("Mesh file", "", Patterns::Anything());
@@ -318,10 +323,10 @@ namespace input_data {
 
 
   template <int dim>
-  void NotchedTestData<dim>::read_input_file(std::string file_name)
+  void PhaseFieldSolidData<dim>::read_input_file(std::string file_name)
   {
     prm.read_input(file_name);
-    prm.print_parameters(std::cout, ParameterHandler::Text);
+    // prm.print_parameters(std::cout, ParameterHandler::Text);
     assign_parameters();
     compute_runtime_parameters();
     check_input();
@@ -329,7 +334,7 @@ namespace input_data {
 
 
 template <int dim>
-void NotchedTestData<dim>::check_input()
+void PhaseFieldSolidData<dim>::check_input()
 {
   if (!this->uniform_fracture_toughness)
     {
@@ -370,7 +375,7 @@ AssertThrow(this->postprocessing_function_names.size() ==
 }
 
 template <int dim>
-void NotchedTestData<dim>::assign_parameters()
+void PhaseFieldSolidData<dim>::assign_parameters()
 {
   { // Mesh
     prm.enter_subsection("Mesh");
@@ -528,7 +533,7 @@ void NotchedTestData<dim>::assign_parameters()
 }  // eom
 
   template <int dim>
-  double NotchedTestData<dim>::get_time_step(const double time)
+  double PhaseFieldSolidData<dim>::get_time_step(const double time)
   /* get value of the time step from the time-stepping table */
   {
     double time_step = timestep_table.rbegin()->second;

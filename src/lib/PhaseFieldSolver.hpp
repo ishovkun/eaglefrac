@@ -47,7 +47,7 @@ public:
 // methods
 PhaseFieldSolver(MPI_Comm &mpi_communicator,
                  parallel::distributed::Triangulation<dim> &triangulation_,
-                 input_data::PhaseFieldData<dim> &data_,
+                 InputData::PhaseFieldData<dim> &data_,
                  ConditionalOStream &pcout_,
                  TimerOutput &computing_timer_);
 ~PhaseFieldSolver();
@@ -110,7 +110,7 @@ public:
 // variables
 MPI_Comm &mpi_communicator;
 parallel::distributed::Triangulation<dim> &triangulation;
-input_data::PhaseFieldData<dim> &data;
+InputData::PhaseFieldData<dim> &data;
 DoFHandler<dim> dof_handler;
 
 private:
@@ -158,7 +158,7 @@ template <int dim>
 PhaseFieldSolver<dim>::PhaseFieldSolver
     (MPI_Comm &mpi_communicator_,
     parallel::distributed::Triangulation<dim> &triangulation_,
-    input_data::PhaseFieldData<dim> &data_,
+    InputData::PhaseFieldData<dim> &data_,
     ConditionalOStream &pcout_,
     TimerOutput &computing_timer_)
     :

@@ -16,7 +16,7 @@
 #include <Mesher.hpp>
 
 
-namespace pds_solid
+namespace EagleFrac
 {
   using namespace dealii;
 
@@ -48,7 +48,7 @@ namespace pds_solid
     ConditionalOStream pcout;
     TimerOutput computing_timer;
 
-    input_data::NotchedTestData<dim> data;
+    InputData::PhaseFieldSolidData<dim> data;
     PhaseField::PhaseFieldSolver<dim> phase_field_solver;
     std::string input_file_name, case_name;
   };
@@ -68,6 +68,7 @@ namespace pds_solid
     computing_timer(mpi_communicator, pcout,
                     TimerOutput::summary,
                     TimerOutput::wall_times),
+		data(pcout),
     phase_field_solver(mpi_communicator,
                        triangulation, data,
                        pcout, computing_timer),
@@ -471,7 +472,7 @@ int main(int argc, char *argv[])
     using namespace dealii;
     Utilities::MPI::MPI_InitFinalize mpi_initialization(argc, argv, 1);
     std::string input_file_name = parse_command_line(argc, argv);
-    pds_solid::PDSSolid<2> problem(input_file_name);
+    EagleFrac::PDSSolid<2> problem(input_file_name);
     problem.run();
     return 0;
   }

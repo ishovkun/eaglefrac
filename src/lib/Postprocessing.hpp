@@ -8,7 +8,7 @@ namespace Postprocessing {
 
   template <int dim> Tensor<1,dim>
   compute_boundary_load(PhaseField::PhaseFieldSolver<dim> &pf,
-                        input_data::PhaseFieldData<dim> &data,
+                        InputData::PhaseFieldData<dim> &data,
                         const int boundary_id)
   {
     const QGauss<dim-1> face_quadrature_formula(pf.fe.degree+1);

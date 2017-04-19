@@ -15,80 +15,14 @@
 // Custom modules
 #include <PhaseFieldSolver.hpp>
 #include <Postprocessing.hpp>
-#include <InputData.hpp>
+#include <PhaseFieldPressurizedData.hpp>
+#include <InitialValues.hpp>
 #include <Mesher.hpp>
 
 
-namespace pds_solid
+namespace EagleFrac
 {
 	using namespace dealii;
-
-	// Initial phase-field distribution
-	template <int dim>
-	class InitialValues : public Function<dim>
-	{
-	public:
-		InitialValues(const double minimum_mesh_size);
-
-		virtual double value(const Point<dim> &p,
-												 const unsigned int component = 0) const;
-		virtual void vector_value(const Point<dim> &p,
-															Vector<double> &value) const;
-
-	private:
-		double min_size;
-	};  // end class declaration
-
-
-	template <int dim>
-	InitialValues<dim>::InitialValues(const double minimum_mesh_size)
-		:
-		Function<dim>(dim+1),
-		min_size(minimum_mesh_size)
-	{}  // eom
-
-	template <int dim>
-	double InitialValues<dim>::value(const Point<dim> &p,
-																	 const unsigned int component) const
-	{
-		double width = min_size;
-		double height = min_size;
-
-		double left = 0.4 - width;
-		double right = 0.6 + width;
-		double top = 0.5 + height;
-		double bottom = 0.5 - height;
-		// std::cout << "b " << bottom << std::endl;
-		if (component == dim)
-		{
-			if (   (p(0) >= left)
-			    && (p(0) <= right)
-			 		&& (p(1) >= bottom)
-			 		&& (p(1) <= top))
-			{
-				// std::cout << "pf" << std::endl;
-				return 0.0;
-			}
-			else
-				return 1.0;
-		}
-		// std::cout << "disp" << std::endl;
-		return 0.0;
-	}  // eom
-
-
-	template <int dim>
-	void
-	InitialValues<dim>::vector_value(const Point<dim> &p,
-																	 Vector<double>   &values) const
-	{
-		// for (unsigned int comp = 0; comp < this->n_components; ++comp)
-		for (unsigned int comp = 0; comp < dim+1; ++comp)
-			values(comp) = InitialValues<dim>::value(p, comp);
-			// values(comp) = this->value(p, comp);
-	}  // eom
-
-
 
   template <int dim>
   class PDSSolid
@@ -120,7 +54,8 @@ namespace pds_solid
     ConditionalOStream pcout;
     TimerOutput computing_timer;
 
-    input_data::NotchedTestData<dim> data;
+    // InputData::PhaseFieldSolidData<dim> data;
+    InputData::PhaseFieldPressurizedData<dim> data;
     PhaseField::PhaseFieldSolver<dim> phase_field_solver;
     std::string input_file_name, case_name;
 
@@ -145,6 +80,7 @@ namespace pds_solid
     computing_timer(mpi_communicator, pcout,
                     TimerOutput::summary,
                     TimerOutput::wall_times),
+		data(pcout),
     phase_field_solver(mpi_communicator,
                        triangulation, data,
                        pcout, computing_timer),
@@ -309,8 +245,8 @@ namespace pds_solid
     data.read_input_file(input_file_name);
     read_mesh();
 
+
     // debug input
-		data.biot_coef = 0.8;
     // Point<dim> p(3e-3, 0.01), p1(3e-3, 0.01905);
     // pcout << "toughness " << data.get_fracture_toughness->value(p, 0) << std::endl;
     // pcout << "toughness1 " << data.get_fracture_toughness->value(p1, 0) << std::endl;
@@ -320,7 +256,7 @@ namespace pds_solid
     // return;
 
     prepare_output_directories();
-		//
+
     // compute_runtime_parameters
     double minimum_mesh_size = Mesher::compute_minimum_mesh_size(triangulation,
                                                                  mpi_communicator);
@@ -350,7 +286,9 @@ namespace pds_solid
 
     // Initial values
 		VectorTools::interpolate(phase_field_solver.dof_handler,
-														 InitialValues<dim>(minimum_mesh_size),
+														 InitialValues::Defects<dim>(data.defect_coordinates,
+																												 //  minimum_mesh_size),
+																												 data.regularization_parameter_epsilon),
 														 phase_field_solver.solution);
 	  // return;
     // phase_field_solver.solution.block(1) = 1;
@@ -665,7 +603,7 @@ int main(int argc, char *argv[])
     using namespace dealii;
     Utilities::MPI::MPI_InitFinalize mpi_initialization(argc, argv, 1);
     std::string input_file_name = parse_command_line(argc, argv);
-    pds_solid::PDSSolid<2> problem(input_file_name);
+    EagleFrac::PDSSolid<2> problem(input_file_name);
     problem.run();
     return 0;
   }

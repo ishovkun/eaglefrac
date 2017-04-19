@@ -5,10 +5,12 @@
 ADD_LIBRARY(lib
   PhaseFieldSolver.hpp
   InputData.hpp
+  PhaseFieldPressurizedData.hpp
   LinearSolver.hpp
   Postprocessing.hpp
   Mesher.hpp
   BitMap.hpp
+  InitialValues.hpp
 )
 
 DEAL_II_SETUP_TARGET(lib)

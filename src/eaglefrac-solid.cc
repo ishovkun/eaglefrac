@@ -251,11 +251,18 @@ namespace EagleFrac
 
       IndexSet old_active_set(phase_field_solver.active_set);
 
+			pcout << "Iter #" << "\t"
+			      << "ASet" << "\t"
+			      << "error" << "\t\t"
+			      << "GMRES" << "\t"
+			      << "Search" << "\t"
+						<< std::endl;
       int newton_step = 0;
       const double newton_tolerance = data.newton_tolerance;
       while (newton_step < data.max_newton_iter)
       {
-        pcout << "Newton iteration: " << newton_step << "\t";
+        // pcout << "Newton iteration: " << newton_step << "\t";
+				pcout << newton_step << "\t";
 
         double error;
         if (newton_step > 0)
@@ -266,12 +273,12 @@ namespace EagleFrac
 
           phase_field_solver.compute_active_set(phase_field_solver.solution);
           phase_field_solver.all_constraints.set_zero(phase_field_solver.residual);
-
-          pcout << "Active set: "
-                << phase_field_solver.active_set_size()
-                << "\t";
           error = phase_field_solver.residual_norm();
-          pcout << std::scientific << "error = " << error << "\t";
+
+      	  pcout << phase_field_solver.active_set_size()
+								<< "\t";
+					std::cout.precision(3);
+          pcout << std::scientific << error << "\t";
           std::cout.unsetf(std::ios_base::scientific);
 
           // break condition
@@ -285,10 +292,16 @@ namespace EagleFrac
           old_active_set = phase_field_solver.active_set;
         }  // end first newton step condition
 
-        phase_field_solver.solve_newton_step(time_steps);
+				std::pair<unsigned int, unsigned int> newton_step_results =
+        	phase_field_solver.solve_newton_step(time_steps);
+
+				pcout << newton_step_results.first << "\t";
+				pcout << newton_step_results.second << "\t";
 
         // output_results(newton_step);
-
+				// pcout << "here" << std::endl;
+				newton_step++;
+        pcout << std::endl;
       }  // End Newton iter
 
       // cut the time step if no convergence

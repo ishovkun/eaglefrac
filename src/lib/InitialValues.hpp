@@ -38,8 +38,6 @@ coords(coords_)
 {
 	for (auto &defect : coords)
 	{
-		// auto defect = coords[i];
-		// std::cout << "coord " << defect[0] << "\t";
 		AssertThrow(defect.size() == dim*2,
 								ExcMessage("Wrong size of coords"));
 	}
@@ -54,18 +52,38 @@ double Defects<dim>::value(const Point<dim> &p,
 		{
 			for (auto & defect : coords)
 			{
+				// std::cout << "d0 " << defect[0] << std::endl;
 				double a = (defect[3] - defect[1])/(defect[2] - defect[0]);
 				double b = defect[1] - a*defect[0];
+				double dx = thickness*a*std::pow(0.5, a*a + 1.0);
 				double dy = thickness*std::pow(0.5, a*a + 1.0);
-				if (   p(0) >= defect[0]
-			      && p(0) <= defect[2]
+				// std::cout << "dx " << dx << std::endl;
+				if (   p(0) >= defect[0] - dx
+			      && p(0) <= defect[2] + dx
 			      && p(1) <= a*p(0) + b + dy
-			      && p(1) >= a*p(0) + b - dy
-					)
+			      && p(1) >= a*p(0) + b - dy)
 					{
 						// std::cout << "o'm here " << std::endl;
 						return 0.0;
 					}
+
+					// Vertical defect
+					double reg = 1e-10;
+					if (std::abs(defect[2] - defect[0]) < reg)
+					{
+						dx = thickness/2;
+					  // std::cout << "Vertical" << std::endl;
+						if (   p(0) >= defect[0] - dx
+							  && p(0) <= defect[0] + dx
+								&& p(1) >= defect[1]
+								&& p(1) <= defect[3]
+						   )
+							 {
+								//  std::cout << "Vertical1" << std::endl;
+								 return 0;
+							 }
+					}
+
 			}
 			// std::cout << "I am here " << std::endl;
 			return 1.0;

@@ -84,7 +84,8 @@ void impose_displacement(const std::vector<int>          &,
                          const std::vector<double>        &,
                          const std::vector<bool>          &);
 unsigned int solve();
-void solve_newton_step(const std::pair<double,double> &time_steps);
+std::pair<unsigned int, unsigned int>
+	solve_newton_step(const std::pair<double,double> &time_steps);
 void update_old_solution();
 bool active_set_changed(const IndexSet &) const;
 void truncate_phase_field();
@@ -822,20 +823,23 @@ void PhaseFieldSolver<dim>::update_old_solution()
 }    // eom
 
 template <int dim>
-void PhaseFieldSolver<dim>::
+std::pair<unsigned int, unsigned int>
+PhaseFieldSolver<dim>::
 solve_newton_step(const std::pair<double,double> &time_steps)
 {
     assemble_system(solution, time_steps, true);
     // abort();
-    solve();
+    unsigned int n_gmres = solve();
 
     // line search
     TrilinosWrappers::MPI::BlockVector tmp_vector = solution;
     double old_error = compute_nonlinear_residual(solution, time_steps);
     const int max_steps = 10;
     double damping = 0.6;
+		unsigned int n_steps = 0;
     for (int step = 0; step < max_steps; ++step)
     {
+			n_steps++;
       solution += solution_update;
       compute_nonlinear_residual(solution, time_steps);
       all_constraints.set_zero(residual);
@@ -851,6 +855,10 @@ solve_newton_step(const std::pair<double,double> &time_steps)
         solution_update *= damping;
       }
     } // end line search
+
+		std::pair<unsigned int, unsigned int> solver_results =
+			std::make_pair(n_gmres, n_steps);
+		return solver_results;
 }    // eom
 
 

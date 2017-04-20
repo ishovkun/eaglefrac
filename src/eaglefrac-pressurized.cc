@@ -44,6 +44,8 @@ namespace EagleFrac
     void exectute_adaptive_refinement();
     void prepare_output_directories();
 		void print_header();
+		void impose_pressure_values(const double max_value);
+
 
     MPI_Comm mpi_communicator;
 
@@ -234,9 +236,62 @@ namespace EagleFrac
 		      << "ASet" << "\t"
 		      << "error" << "\t\t"
 		      << "GMRES" << "\t"
-		      << "LSearch" << "\t"
+		      << "Search" << "\t"
 					<< std::endl;
 	}
+
+
+	template <int dim>
+  void PDSSolid<dim>::impose_pressure_values(const double max_value)
+	{
+  	const FEValuesExtractors::Scalar pressure(0);
+  	const FEValuesExtractors::Scalar phase_field(dim);
+
+  	const QGauss<dim> quadrature_formula(2);
+	  FEValues<dim> phi_fe_values(phase_field_solver.fe,
+																quadrature_formula,
+	                          		update_values);
+
+    const unsigned int dofs_per_cell = pressure_fe.dofs_per_cell;
+  	const unsigned int n_q_points    = quadrature_formula.size();
+
+  	std::vector<types::global_dof_index> local_dof_indices(dofs_per_cell);
+		std::vector<double> phi_values(n_q_points);
+		// Vector<double>      local_pressure_vector(dofs_per_cell);
+
+		phase_field_solver.relevant_solution = phase_field_solver.solution;
+
+	  typename DoFHandler<dim>::active_cell_iterator
+		  pressure_cell = pressure_dof_handler.begin_active(),
+		  phi_cell = phase_field_solver.dof_handler.begin_active(),
+		  endc = pressure_dof_handler.end();
+
+  	for (; pressure_cell!=endc; ++pressure_cell, ++phi_cell)
+    	if (pressure_cell->is_locally_owned())
+			{
+				// local_pressure_vector = 0;
+				phi_fe_values.reinit(phi_cell);
+				phi_fe_values[phase_field].
+						get_function_values(phase_field_solver.relevant_solution,
+																phi_values);
+
+				double mean_phi_value = 0;
+				for (unsigned int q=0; q<n_q_points; ++q)
+					mean_phi_value += phi_values[q];
+				mean_phi_value /= n_q_points;
+
+				pressure_cell->get_dof_indices(local_dof_indices);
+
+				for (unsigned int i=0; i<dofs_per_cell; ++i)
+					pressure_owned_solution(local_dof_indices[i]) =
+						max_value*(1.0 - mean_phi_value);
+
+			}
+
+		pressure_owned_solution.compress(VectorOperation::insert);
+
+		// phase_field_solver.dof_handler
+	}  // eom
 
 
   template <int dim>
@@ -287,10 +342,13 @@ namespace EagleFrac
     // Initial values
 		VectorTools::interpolate(phase_field_solver.dof_handler,
 														 InitialValues::Defects<dim>(data.defect_coordinates,
-																												 //  minimum_mesh_size),
-																												 data.regularization_parameter_epsilon),
+																												  // idk why e/2, it just works better
+																												 data.regularization_parameter_epsilon/2),
 														 phase_field_solver.solution);
+		// pcout << "Size!!! " << data.defect_coordinates.size() << std::endl;
+		// pcout << "Size1 " << data.defect_coordinates[0].size() << std::endl;
 	  // return;
+
     // phase_field_solver.solution.block(1) = 1;
     // phase_field_solver.solution.block(0) = 0;
     phase_field_solver.old_solution.block(1) = phase_field_solver.solution.block(1);
@@ -316,7 +374,11 @@ namespace EagleFrac
 						<< time_step
             << std::endl;
 
-			pressure_owned_solution = (time_step_number > 1) ? 1e3*time: 0.0;
+			const double pressure_max_value = (time_step_number > 1) ? 1e3*time: 0.0;
+			pressure_owned_solution = pressure_max_value;
+			// impose_pressure_values(pressure_max_value);
+			// return;
+			// pressure_owned_solution = 0*time;
 			pressure_relevant_solution = pressure_owned_solution;
 
       impose_displacement_on_solution(time);
@@ -533,6 +595,10 @@ namespace EagleFrac
     for (unsigned int i=0; i<subdomain.size(); ++i)
       subdomain(i) = triangulation.locally_owned_subdomain();
     data_out.add_data_vector(subdomain, "subdomain");
+		// Add pressure
+		data_out.add_data_vector(pressure_dof_handler,
+														 pressure_relevant_solution,
+														 "pressure");
     data_out.build_patches();
 
     int n_time_step_digits = 3,

@@ -159,8 +159,6 @@ namespace EagleFrac
     //   extension = filename.substr(pos+1);
 
     case_name = input_file_name.substr(path_index+1, extension_index-1);
-    // std::cout << "input file " << input_file_name << std::endl;
-    // std::cout << "case name: " << case_name << std::endl;
 
     boost::filesystem::path output_directory_path("./" + case_name);
 
@@ -237,6 +235,7 @@ namespace EagleFrac
       time_step_number++;
 
       phase_field_solver.update_old_solution();
+      std::pair<double,double> time_steps = std::make_pair(time_step, old_time_step);
 
     redo_time_step:
       pcout << std::endl
@@ -246,8 +245,23 @@ namespace EagleFrac
 						<< time_step
             << std::endl;
 
-      impose_displacement_on_solution(time);
-      std::pair<double,double> time_steps = std::make_pair(time_step, old_time_step);
+
+			// double tshift = 5.5;
+			// if (time >= tshift)
+			// {
+			// 	// for (unsigned int i=0; i<data.displacement_boundary_velocities.size(); ++i)
+			// 	// data.displacement_boundary_velocities[0] =  ;
+			//
+			// 	double delta_time = time - tshift;
+			// 	double ft = 3.0 - 1.0*delta_time;
+			// 	data.get_fracture_toughness =
+	    //     new ConstantFunction<dim>(ft, 1);
+			//
+      // 	impose_displacement_on_solution(tshift);
+			// }
+
+			// else
+    	impose_displacement_on_solution(time);
 
       IndexSet old_active_set(phase_field_solver.active_set);
 

@@ -3,6 +3,7 @@
 subsection Boundary conditions
   set Displacement boundary labels     = 0, 1, 2, 3
   set Displacement boundary components = 0, 0, 1, 1
+  #set Displacement boundary velocities = 0, 0, +1e-8, -1e-8
   set Displacement boundary velocities = 0, 0, 0, 0
 end
 
@@ -10,8 +11,8 @@ end
 subsection Initial conditions
   #              x1,  y1,  x2,  y2
   #set Defects = (0.05, 0.5, 0.6, 0.5); (0.1, 0.4, 0.1, 0.6); #(0.3, 0.4, 0.3, 0.6); (0.5, 0.4, 0.5, 0.6)
-  set Defects = (0.05, 0.5, 0.6, 0.5); (0.2, 0.4, 0.2, 0.6); (0.4, 0.4, 0.4, 0.6);
-  #set Defects = (0.4, 0.5, 0.6, 0.5);
+  #set Defects = (0.05, 0.5, 0.6, 0.5); (0.2, 0.4, 0.2, 0.6); (0.4, 0.4, 0.4, 0.6);
+  set Defects = (0.45, 0.5, 0.55, 0.5);
 end
 
 subsection Equation data
@@ -19,7 +20,7 @@ subsection Equation data
   set Young modulus              = 210000
   set Poisson ratio              = 0.3
   set Biot coefficient           = 0.8
-  set Regularization epsilon     = 5, 1
+  set Regularization epsilon     = 8, 1
   set Regularization kappa       = 1e-10
   set Penalization c             = 1e3
   set Uniform Poisson ratio      = true
@@ -32,7 +33,7 @@ end
 
 subsection Mesh
   set Initial global refinement steps = 4
-  set Local refinement steps          = 0
+  set Local refinement steps          = 1
   set Local refinement region         = 0.0, 0.6, 0.65, 0.4
   set Adaptive steps                  = 2  
   set Adaptive phi value              = 0.6
@@ -41,9 +42,9 @@ end
 
 
 subsection Solver
-  set Time stepping table = (0, 1e-1);
+  set Time stepping table = (0, 1e0); (6, 1e-1);
   set Max Newton steps  = 50
-  set Minimum time step = 1e-9
+  set Minimum time step = 1e-5
   set Newton tolerance  = 1e-9
   set T max             = 10
 end

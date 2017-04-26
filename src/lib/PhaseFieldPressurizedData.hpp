@@ -20,7 +20,8 @@ namespace InputData
 	// private:
 		// PhaseFieldSolidData<dim>
 	public:
-		std::vector <std::vector<double> > defect_coordinates;
+		std::vector<std::vector<double> > defect_coordinates;
+		std::vector<double> 							displacement_boundary_values;
 	};
 
 
@@ -55,15 +56,17 @@ namespace InputData
                     Patterns::List(Patterns::Integer()));
       this->prm.declare_entry("Displacement boundary components", "",
                     Patterns::List(Patterns::Integer(0, dim-1)));
-      this->prm.declare_entry("Displacement boundary velocities", "",
+      this->prm.declare_entry("Displacement boundary values", "",
                       Patterns::List(Patterns::Double()));
-      this->prm.declare_entry("Displacement points", "", Patterns::Anything());
-      this->prm.declare_entry("Displacement point components", "",
-                    Patterns::List(Patterns::Integer(0, dim-1)));
-      this->prm.declare_entry("Displacement point velocities", "",
-                    Patterns::List(Patterns::Double()));
-      this->prm.declare_entry("Constraint point phase field", "",
-                        Patterns::List(Patterns::Bool()));
+      // this->prm.declare_entry("Displacement boundary velocities", "",
+      //                 Patterns::List(Patterns::Double()));
+      // this->prm.declare_entry("Displacement points", "", Patterns::Anything());
+      // this->prm.declare_entry("Displacement point components", "",
+      //               Patterns::List(Patterns::Integer(0, dim-1)));
+      // this->prm.declare_entry("Displacement point velocities", "",
+      //               Patterns::List(Patterns::Double()));
+      // this->prm.declare_entry("Constraint point phase field", "",
+      //                   Patterns::List(Patterns::Bool()));
       this->prm.leave_subsection();
     }
 		{ // IC's
@@ -155,16 +158,18 @@ namespace InputData
 	      parse_string_list<int>(this->prm.get("Displacement boundary labels"));
 	    this->displacement_boundary_components =
 	      parse_string_list<int>(this->prm.get("Displacement boundary components"));
-	    this->displacement_boundary_velocities =
+	    this->displacement_boundary_values =
 	      parse_string_list<double>(this->prm.get("Displacement boundary velocities"));
-	    this->displacement_points =
-	      parse_point_list<dim>(this->prm.get("Displacement points"));
-	    this->displacement_point_components =
-	      parse_string_list<int>(this->prm.get("Displacement point components"));
-	    this->displacement_point_velocities =
-	      parse_string_list<double>(this->prm.get("Displacement point velocities"));
-	    this->constraint_point_phase_field =
-	      parse_string_list<bool>(this->prm.get("Constraint point phase field"));
+	    // this->displacement_boundary_velocities =
+	    //   parse_string_list<double>(this->prm.get("Displacement boundary velocities"));
+	    // this->displacement_points =
+	    //   parse_point_list<dim>(this->prm.get("Displacement points"));
+	    // this->displacement_point_components =
+	    //   parse_string_list<int>(this->prm.get("Displacement point components"));
+	    // this->displacement_point_velocities =
+	    //   parse_string_list<double>(this->prm.get("Displacement point velocities"));
+	    // this->constraint_point_phase_field =
+	    //   parse_string_list<bool>(this->prm.get("Constraint point phase field"));
 	    this->prm.leave_subsection();
 	  }
 		{ // initial conditions

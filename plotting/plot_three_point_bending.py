@@ -7,7 +7,7 @@ cos = np.cos
 sqrt = np.sqrt
 
 # data = np.loadtxt("./post.txt")
-data = np.loadtxt("../three-point-bending/boundary_load-1.txt")
+data = np.loadtxt("../solid-three_point_bending/boundary_load-1.txt")
 t = data[:, 0]
 load_x = data[:, 1]
 load_y = -data[:, 2]

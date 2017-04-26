@@ -46,7 +46,6 @@ subsection Mesh
   set Initial global refinement steps = 0
   set Local refinement steps          = 2
   set Local refinement region         = -0.0025, 0.002, 0.002, 0.008 # refine notch
-  #set Local refinement region         = -0.002, 0.002, 0.015, 0.0191 # refine top arc
   set Adaptive steps                  = 3
   set Adaptive phi value              = 0.6
   set Mesh file                       = input/notch_semicircle.msh

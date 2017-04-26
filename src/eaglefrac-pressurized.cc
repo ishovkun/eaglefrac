@@ -22,7 +22,7 @@
 
 namespace EagleFrac
 {
-	using namespace dealii;
+  using namespace dealii;
 
   template <int dim>
   class PDSSolid
@@ -45,6 +45,7 @@ namespace EagleFrac
     void prepare_output_directories();
 		void print_header();
 		void impose_pressure_values(const double max_value);
+		void compute_Gc_vector();
 
 
     MPI_Comm mpi_communicator;
@@ -63,6 +64,8 @@ namespace EagleFrac
 
 		TrilinosWrappers::MPI::BlockVector pressure_owned_solution;
 		TrilinosWrappers::MPI::BlockVector pressure_relevant_solution;
+		TrilinosWrappers::MPI::BlockVector fracture_toughness_owned;
+		TrilinosWrappers::MPI::BlockVector fracture_toughness_relevant;
   };
 
 
@@ -113,7 +116,7 @@ namespace EagleFrac
     int n_displacement_conditions = data.displacement_boundary_labels.size();
     std::vector<double> displacement_values(n_displacement_conditions);
     for (int i=0; i<n_displacement_conditions; ++i)
-      displacement_values[i] = data.displacement_boundary_velocities[i]*time;
+      displacement_values[i] = data.displacement_boundary_values[i];
 
     int n_displacement_node_conditions = data.displacement_points.size();
     std::vector<double> displacement_point_values(n_displacement_node_conditions);
@@ -175,8 +178,6 @@ namespace EagleFrac
     //   extension = filename.substr(pos+1);
 
     case_name = input_file_name.substr(path_index+1, extension_index-1);
-    // std::cout << "input file " << input_file_name << std::endl;
-    // std::cout << "case name: " << case_name << std::endl;
 
     boost::filesystem::path output_directory_path("./" + case_name);
 
@@ -224,6 +225,8 @@ namespace EagleFrac
 																			mpi_communicator);
 		pressure_owned_solution.reinit(owned_partitioning,
 																	 mpi_communicator);
+		fracture_toughness_owned.reinit(owned_partitioning, mpi_communicator);
+		fracture_toughness_relevant.reinit(relevant_partitioning, mpi_communicator);
 
   	computing_timer.exit_section();
 	} // eom
@@ -238,6 +241,64 @@ namespace EagleFrac
 		      << "GMRES" << "\t"
 		      << "Search" << "\t"
 					<< std::endl;
+	}
+
+	template <int dim>
+	class ToughnessMap : public Function<dim>
+	{
+	public:
+		ToughnessMap(const std::pair<double,double> &xlim_,
+								 const std::pair<double,double> &ylim_,
+								 const double      inside_value_,
+								 const double      beyond_value_);
+
+		virtual double value(const Point<dim> &p,
+												 const unsigned int component = 0) const;
+
+		private:
+			const std::pair<double,double> &xlim, &ylim;
+			const double inside_value, beyond_value;
+	};
+
+
+	template <int dim>
+	ToughnessMap<dim>::ToughnessMap(const std::pair<double,double> &xlim_,
+																	const std::pair<double,double> &ylim_,
+																	const double      inside_value_,
+																	const double      beyond_value_)
+	:
+	Function<dim>(1),
+	xlim(xlim_),
+	ylim(ylim_),
+	inside_value(inside_value_),
+	beyond_value(beyond_value_)
+  {}
+
+
+	template <int dim>
+	double ToughnessMap<dim>::value(const Point<dim> &p,
+																	const unsigned int component) const
+  {
+		// if (component == dim)
+		// 	if (p(axis) - coord > 0)
+		// 		return beyond_value;
+		// 	else
+		// 		return inside_value;
+		if (component == 0)
+		{
+			if (p[0] >= xlim.first && p[0] <= xlim.second &&
+					p[1] >= ylim.first && p[1] <= ylim.second)
+				return inside_value;
+			else
+				return beyond_value;
+		}
+			// if (p[0] < 0.5 &&
+			// 	  ((p[1] > 0.6 && p[1] < 0.7)
+			// || (p[1] < 0.4 && p[1] > 0.3)))
+			// 	return beyond_value;
+			// else
+			// 	return inside_value;
+		return 0;
 	}
 
 
@@ -279,16 +340,57 @@ namespace EagleFrac
 				for (unsigned int q=0; q<n_q_points; ++q)
 					mean_phi_value += phi_values[q];
 				mean_phi_value /= n_q_points;
+				// if (mean_phi_value )
 
 				pressure_cell->get_dof_indices(local_dof_indices);
 
 				for (unsigned int i=0; i<dofs_per_cell; ++i)
 					pressure_owned_solution(local_dof_indices[i]) =
-						max_value*(1.0 - mean_phi_value);
+						(mean_phi_value < 0.9) ? max_value : 0.0;
+						// max_value*(1.0 - mean_phi_value);
 
 			}
 
 		pressure_owned_solution.compress(VectorOperation::insert);
+
+		// phase_field_solver.dof_handler
+	}  // eom
+
+	template <int dim>
+  void PDSSolid<dim>::compute_Gc_vector()
+	{
+  	// const FEValuesExtractors::Scalar pressure(0);
+  	// const FEValuesExtractors::Scalar phase_field(dim);
+
+  	const QGauss<dim> quadrature_formula(2);
+	  // FEValues<dim> phi_fe_values(phase_field_solver.fe,
+		// 														quadrature_formula,
+	  //                         		update_values);
+
+    const unsigned int dofs_per_cell = pressure_fe.dofs_per_cell;
+
+  	std::vector<types::global_dof_index> local_dof_indices(dofs_per_cell);
+		// std::vector<double> phi_values(n_q_points);
+		// Vector<double>      local_pressure_vector(dofs_per_cell);
+
+		// phase_field_solver.relevant_solution = phase_field_solver.solution;
+
+	  typename DoFHandler<dim>::active_cell_iterator
+		  pressure_cell = pressure_dof_handler.begin_active(),
+		  endc = pressure_dof_handler.end();
+
+  	for (; pressure_cell!=endc; ++pressure_cell)
+    	if (pressure_cell->is_locally_owned())
+			{
+      	double G_c = data.get_fracture_toughness->value(pressure_cell->center(), 0);
+
+				pressure_cell->get_dof_indices(local_dof_indices);
+
+				for (unsigned int i=0; i<dofs_per_cell; ++i)
+					fracture_toughness_owned(local_dof_indices[i]) = G_c;
+			}
+
+		fracture_toughness_owned.compress(VectorOperation::insert);
 
 		// phase_field_solver.dof_handler
 	}  // eom
@@ -374,8 +476,33 @@ namespace EagleFrac
 						<< time_step
             << std::endl;
 
-			const double pressure_max_value = (time_step_number > 1) ? 1e3*time: 0.0;
+			double pressure_max_value = (time_step_number > 1) ? 1e3*time: 0.0;
 			pressure_owned_solution = pressure_max_value;
+
+			// pressure_owned_solution = pressure_max_value;
+			// double t_shift = 6.0;
+			// if (time < t_shift)
+			// 	pressure_owned_solution = pressure_max_value;
+			// else
+			// 	{
+			// 		pcout << "shift" << std::endl;
+			// 		pressure_max_value = 1e3*t_shift;
+			// 		pressure_owned_solution = pressure_max_value;
+			// 		double right_border = 0.6;
+			// 		if (time > t_shift && time <= 7.3)
+			// 			right_border = 0.7;
+			// 		if (time > 7.3 && time <= 7.7)
+			// 			right_border = 0.8;
+			// 		if (time > 7.7)
+			// 			right_border = 1.0;
+			// 		// std::pair<double, double> xlim = std::make_pair(0.6, 0.6*1e-1*(time-t_shift));
+			// 		std::pair<double, double> xlim = std::make_pair(0.6, right_border);
+			// 		std::pair<double, double> ylim = std::make_pair(0.42, 0.58);
+			// 		data.get_fracture_toughness =
+			// 			new ToughnessMap<dim>(xlim, ylim, 0.7, 1.0);
+			// 	}
+
+		  // compute_Gc_vector();
 			// impose_pressure_values(pressure_max_value);
 			// return;
 			// pressure_owned_solution = 0*time;
@@ -522,6 +649,7 @@ namespace EagleFrac
       execute_postprocessing(time);
       // return;
 
+      // phase_field_solver.use_old_time_step_phi = false;
       phase_field_solver.use_old_time_step_phi = true;
 
       old_time_step = time_step;
@@ -599,6 +727,11 @@ namespace EagleFrac
 		data_out.add_data_vector(pressure_dof_handler,
 														 pressure_relevant_solution,
 														 "pressure");
+    // toughness
+		fracture_toughness_relevant = fracture_toughness_owned;
+		data_out.add_data_vector(pressure_dof_handler,
+														 fracture_toughness_relevant,
+														 "G_c");
     data_out.build_patches();
 
     int n_time_step_digits = 3,

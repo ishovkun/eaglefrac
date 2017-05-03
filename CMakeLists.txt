@@ -32,6 +32,10 @@ PROJECT(ipds)
 # lib
 INCLUDE_DIRECTORIES(${CMAKE_SOURCE_DIR}/src/lib)
 ADD_SUBDIRECTORY(src/lib)
+SET_TARGET_PROPERTIES (
+    lib
+    PROPERTIES LINKER_LANGUAGE CXX
+)
 
 # targets
 ADD_EXECUTABLE(eaglefrac-solid ${CMAKE_SOURCE_DIR}/src/eaglefrac-solid.cc)
@@ -40,12 +44,12 @@ DEAL_II_SETUP_TARGET(eaglefrac-solid)
 ADD_EXECUTABLE(eaglefrac-pressurized ${CMAKE_SOURCE_DIR}/src/eaglefrac-pressurized.cc)
 DEAL_II_SETUP_TARGET(eaglefrac-pressurized)
 
+ADD_EXECUTABLE(eaglefrac-fluid ${CMAKE_SOURCE_DIR}/src/eaglefrac-fluid.cc)
+DEAL_II_SETUP_TARGET(eaglefrac-fluid)
+
 # linking
 TARGET_LINK_LIBRARIES(eaglefrac-solid lib boost_filesystem)
 TARGET_LINK_LIBRARIES(eaglefrac-pressurized lib boost_filesystem)
+TARGET_LINK_LIBRARIES(eaglefrac-fluid lib boost_filesystem)
 
-SET_TARGET_PROPERTIES (
-    lib
-    PROPERTIES LINKER_LANGUAGE CXX
-)
 # DEAL_II_INVOKE_AUTOPILOT()

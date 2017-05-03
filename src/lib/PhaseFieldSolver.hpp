@@ -45,11 +45,11 @@ class PhaseFieldSolver
 {
 public:
 // methods
-PhaseFieldSolver(MPI_Comm &mpi_communicator,
+PhaseFieldSolver(MPI_Comm                                  &mpi_communicator,
                  parallel::distributed::Triangulation<dim> &triangulation_,
-                 InputData::PhaseFieldData<dim> &data_,
-                 ConditionalOStream &pcout_,
-                 TimerOutput &computing_timer_);
+                 InputData::PhaseFieldData<dim>            &data_,
+                 ConditionalOStream                        &pcout_,
+                 TimerOutput                               &computing_timer_);
 ~PhaseFieldSolver();
 
 void setup_dofs();
@@ -86,6 +86,11 @@ void impose_displacement(const std::vector<int>          &,
 unsigned int solve();
 std::pair<unsigned int, unsigned int>
 	solve_newton_step(const std::pair<double,double> &time_steps);
+
+std::pair<unsigned int, unsigned int>
+solve_coupled_newton_step(const TrilinosWrappers::MPI::BlockVector &pressure_solution,
+													const std::pair<double,double> 		 			 &time_steps);
+
 void update_old_solution();
 bool active_set_changed(const IndexSet &) const;
 void truncate_phase_field();
@@ -148,6 +153,7 @@ IndexSet active_set;
 TrilinosWrappers::MPI::BlockVector solution, solution_update, residual;
 TrilinosWrappers::MPI::BlockVector old_solution, old_old_solution,
                                    relevant_solution;
+TrilinosWrappers::MPI::BlockVector owned_storage_vector;
 TrilinosWrappers::MPI::BlockVector rhs_vector;
 ConstraintMatrix physical_constraints, all_constraints, hanging_nodes_constraints;
 bool use_old_time_step_phi;
@@ -303,6 +309,8 @@ void PhaseFieldSolver<dim>::setup_dofs()
                       mpi_communicator, /* omit-zeros=*/ true);
     residual.reinit(owned_partitioning, mpi_communicator, /* omit-zeros=*/ false);
     relevant_residual.reinit(relevant_partitioning, mpi_communicator);
+    owned_storage_vector.reinit(owned_partitioning, mpi_communicator,
+																/* omit-zeros=*/ false);
 
     active_set.clear();
     active_set.set_size(dof_handler.n_dofs());
@@ -470,7 +478,10 @@ assemble_coupled_system(const TrilinosWrappers::MPI::BlockVector &linerarization
 			}
 
       double G_c = data.get_fracture_toughness->value(cell->center(), 0);
-      // pcout << "g_c " << G_c << std::endl;
+			double E = data.get_young_modulus->value(cell->center(), 0);
+			double nu = data.get_poisson_ratio->value(cell->center(), 0);
+			double lame_constant = E*nu/((1.+nu)*(1.-2*nu));
+			double shear_modulus = 0.5*E/(1.+nu);
 
       for (unsigned int q=0; q<n_q_points; ++q)
       {
@@ -480,23 +491,23 @@ assemble_coupled_system(const TrilinosWrappers::MPI::BlockVector &linerarization
 
         // Simple splitting
         // stress_decomposition.get_stress_decomposition(strain_tensor_value,
-        //                                               data.lame_constant,
-        //                                               data.shear_modulus,
+        //                                               lame_constant,
+        //                                               shear_modulus,
         //                                               stress_tensor_plus,
         //                                               stress_tensor_minus);
 
         // Spectral decomposition
         stress_decomposition.stress_spectral_decomposition(strain_tensor_value,
-                                                           data.lame_constant,
-                                                           data.shear_modulus,
+                                                           lame_constant,
+                                                           shear_modulus,
                                                            stress_tensor_plus,
                                                            stress_tensor_minus);
 
         // we get nans at the first time step
         if (!numbers::is_finite(trace(stress_tensor_plus)))
           stress_decomposition.get_stress_decomposition(strain_tensor_value,
-                                                        data.lame_constant,
-                                                        data.shear_modulus,
+                                                        lame_constant,
+                                                        shear_modulus,
                                                         stress_tensor_plus,
                                                         stress_tensor_minus);
 
@@ -526,16 +537,16 @@ assemble_coupled_system(const TrilinosWrappers::MPI::BlockVector &linerarization
           {
             // No decomposition
             // sigma_u_plus[k] =
-            //         data.lame_constant*trace(eps_u[k])*identity_tensor
-            //         + 2*data.shear_modulus*eps_u[k];
+            //         lame_constant*trace(eps_u[k])*identity_tensor
+            //         + 2*shear_modulus*eps_u[k];
             // sigma_u_minus[k] = 0;
 
             // Spectral decomposition
             stress_decomposition.stress_spectral_decomposition_derivatives
               (strain_tensor_value,
                eps_u[k],
-               data.lame_constant,
-               data.shear_modulus,
+               lame_constant,
+               shear_modulus,
                sigma_u_plus[k],
                sigma_u_minus[k]);
 
@@ -545,8 +556,8 @@ assemble_coupled_system(const TrilinosWrappers::MPI::BlockVector &linerarization
               stress_decomposition.get_stress_decomposition_derivatives
                 (strain_tensor_value,
                  eps_u[k],
-                 data.lame_constant,
-                 data.shear_modulus,
+                 lame_constant,
+                 shear_modulus,
                  sigma_u_plus[k],
                  sigma_u_minus[k]);
           }
@@ -818,8 +829,8 @@ compute_active_set(TrilinosWrappers::MPI::BlockVector &linerarization_point)
 template <int dim>
 void PhaseFieldSolver<dim>::update_old_solution()
 {
-        old_old_solution = old_solution;
-        old_solution = solution;
+  old_old_solution = old_solution;
+  old_solution = solution;
 }    // eom
 
 template <int dim>
@@ -832,7 +843,7 @@ solve_newton_step(const std::pair<double,double> &time_steps)
     unsigned int n_gmres = solve();
 
     // line search
-    TrilinosWrappers::MPI::BlockVector tmp_vector = solution;
+		owned_storage_vector = solution;
     double old_error = compute_nonlinear_residual(solution, time_steps);
     const int max_steps = 10;
     double damping = 0.6;
@@ -851,7 +862,7 @@ solve_newton_step(const std::pair<double,double> &time_steps)
       if (step < max_steps)
       {
         // solution = relevant_solution;
-        solution = tmp_vector;
+        solution = owned_storage_vector;
         solution_update *= damping;
       }
     } // end line search
@@ -859,6 +870,54 @@ solve_newton_step(const std::pair<double,double> &time_steps)
 		std::pair<unsigned int, unsigned int> solver_results =
 			std::make_pair(n_gmres, n_steps);
 		return solver_results;
+}    // eom
+
+
+template <int dim>
+std::pair<unsigned int, unsigned int>
+PhaseFieldSolver<dim>::
+solve_coupled_newton_step(const TrilinosWrappers::MPI::BlockVector &pressure_solution,
+													const std::pair<double,double> 		 			 &time_steps)
+{
+  // assemble_system(solution, time_steps, true);
+	assemble_coupled_system(solution, pressure_solution, time_steps,
+												  /*include_pressure = */ true,
+												 	/*assemble_matrix  = */ true);
+	double old_error = rhs_vector.l2_norm();
+  // abort();
+  unsigned int n_gmres = solve();
+
+  // line search
+	owned_storage_vector = solution;
+
+  const int max_steps = 10;
+  double damping = 0.6;
+	unsigned int n_steps = 0;
+  for (int step = 0; step < max_steps; ++step)
+  {
+		n_steps++;
+    solution += solution_update;
+    // compute_nonlinear_residual
+		assemble_coupled_system(solution, pressure_solution, time_steps,
+													  /*include_pressure = */ true,
+													 	/*assemble_matrix  = */ false);
+    all_constraints.set_zero(residual);
+    double error = residual.l2_norm();
+
+    if (error < old_error)
+      break;
+
+    if (step < max_steps)
+    {
+      // solution = relevant_solution;
+      solution = owned_storage_vector;
+      solution_update *= damping;
+    }
+  } // end line search
+
+	std::pair<unsigned int, unsigned int> solver_results =
+		std::make_pair(n_gmres, n_steps);
+	return solver_results;
 }    // eom
 
 
@@ -1098,28 +1157,28 @@ impose_displacement(const std::vector<int>          &boundary_ids,
 template <int dim>
 void PhaseFieldSolver<dim>::setup_preconditioners()
 {
-        // Preconditioner for the displacement (0, 0) block
-        // TrilinosWrappers::PreconditionAMG prec_displacement;
-        {
-          TrilinosWrappers::PreconditionAMG::AdditionalData data;
-          data.constant_modes = constant_modes;
-          data.elliptic = true;
-          data.higher_order_elements = true;
-          data.smoother_sweeps = 2;
-          data.aggregation_threshold = 0.02;
-          prec_displacement.initialize(system_matrix.block(0, 0), data);
-        }
+  // Preconditioner for the displacement (0, 0) block
+  // TrilinosWrappers::PreconditionAMG prec_displacement;
+  {
+    TrilinosWrappers::PreconditionAMG::AdditionalData data;
+    data.constant_modes = constant_modes;
+    data.elliptic = true;
+    data.higher_order_elements = true;
+    data.smoother_sweeps = 2;
+    data.aggregation_threshold = 0.02;
+    prec_displacement.initialize(system_matrix.block(0, 0), data);
+  }
 
-        // Preconditioner for the phase-field (1, 1) block
-        // TrilinosWrappers::PreconditionAMG prec_phase_field;
-        {
-          TrilinosWrappers::PreconditionAMG::AdditionalData data;
-          data.elliptic = true;
-          data.higher_order_elements = true;
-          data.smoother_sweeps = 2;
-          data.aggregation_threshold = 0.02;
-          prec_phase_field.initialize(system_matrix.block(1, 1), data);
-        }
+  // Preconditioner for the phase-field (1, 1) block
+  // TrilinosWrappers::PreconditionAMG prec_phase_field;
+  {
+    TrilinosWrappers::PreconditionAMG::AdditionalData data;
+    data.elliptic = true;
+    data.higher_order_elements = true;
+    data.smoother_sweeps = 2;
+    data.aggregation_threshold = 0.02;
+    prec_phase_field.initialize(system_matrix.block(1, 1), data);
+  }
 }    // eom
 
 

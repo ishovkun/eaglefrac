@@ -1,5 +1,8 @@
 #pragma once
 
+// #include <iostream>     // std::cout
+#include <fstream>
+
 #include <deal.II/base/tensor.h>
 #include <deal.II/base/function.h>
 

@@ -245,22 +245,6 @@ namespace EagleFrac
 						<< time_step
             << std::endl;
 
-
-			// double tshift = 5.5;
-			// if (time >= tshift)
-			// {
-			// 	// for (unsigned int i=0; i<data.displacement_boundary_velocities.size(); ++i)
-			// 	// data.displacement_boundary_velocities[0] =  ;
-			//
-			// 	double delta_time = time - tshift;
-			// 	double ft = 3.0 - 1.0*delta_time;
-			// 	data.get_fracture_toughness =
-	    //     new ConstantFunction<dim>(ft, 1);
-			//
-      // 	impose_displacement_on_solution(tshift);
-			// }
-
-			// else
     	impose_displacement_on_solution(time);
 
       IndexSet old_active_set(phase_field_solver.active_set);

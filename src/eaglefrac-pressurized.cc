@@ -552,56 +552,7 @@ namespace EagleFrac
           old_active_set = phase_field_solver.active_set;
         }  // end first newton step condition
 
-				{ // Solve newton step
-        	// phase_field_solver.solve_newton_step(time_steps);
-			    phase_field_solver.assemble_coupled_system(phase_field_solver.solution,
-																										 pressure_relevant_solution,
-																										 time_steps,
-																										 /*include_pressure = */ true,
-																										 /*assemble_matrix = */ true);
-          unsigned int n_gmres = phase_field_solver.solve();
 
-					// compute linear residual for debugging
-					// TrilinosWrappers::MPI::BlockVector norm = phase_field_solver.solution;
-					// double eeee = phase_field_solver.linear_residual(norm);
-					// pcout << "\nerrrror " << eeee << std::endl;
-
-					pcout << n_gmres << "\t";
-
-					// line search
-					TrilinosWrappers::MPI::BlockVector tmp_vector = phase_field_solver.solution;
-
-					const int max_steps = 10;
-					double damping = 0.6;
-					int n_steps = 0;
-					for (int step = 0; step < max_steps; ++step)
-					{
-						// pcout << "\nstep " << step << "\t";
-						n_steps += 1;
-
-						phase_field_solver.solution += phase_field_solver.solution_update;
-						// compute new norm
-						phase_field_solver.assemble_coupled_system(phase_field_solver.solution,
-																											 pressure_relevant_solution,
-																											 time_steps,
-																											 /*include_pressure = */ true,
-																											 /*assemble_matrix = */ false);
-						phase_field_solver.all_constraints.set_zero(phase_field_solver.residual);
-						double lin_search_error = phase_field_solver.residual_norm();
-						// pcout << "Line search error " << lin_search_error << std::endl;
-
-						// if (lin_search_error < old_error)
-						if (lin_search_error < error)
-						{
-							// pcout << "\nBreaking LoL" << std::endl;
-							break;
-						}
-						// pcout << "I'm broke" << std::endl;
-						phase_field_solver.solution = tmp_vector;
-						phase_field_solver.solution_update *= damping;
-					} // end line search
-					pcout << n_steps << "\t";
-				}  // end solve
 
         // output_results(newton_step);
         newton_step++;

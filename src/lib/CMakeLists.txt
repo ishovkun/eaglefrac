@@ -11,6 +11,9 @@ ADD_LIBRARY(lib
   Mesher.hpp
   BitMap.hpp
   InitialValues.hpp
+  PressureSolver.hpp
+  SinglePhaseData.hpp
+  Well.hpp
 )
 
 DEAL_II_SETUP_TARGET(lib)

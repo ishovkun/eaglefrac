@@ -1,0 +1,55 @@
+# Listing of Parameters
+# ---------------------
+subsection Boundary conditions
+  set Displacement boundary labels     = 0, 1, 2, 3
+  set Displacement boundary components = 0, 0, 1, 1
+  set Displacement boundary values = 0, 0, 0, 0
+end
+
+
+subsection Initial conditions
+  #              x1,  y1,  x2,  y2
+  set Defects = (0.4, 0.5, 0.6, 0.5)
+  set Reservoir pressure = 1e5
+end
+
+subsection Equation data
+  set Fracture toughness         = 1
+  set Young modulus              = 1e10
+  set Poisson ratio              = 0.3
+  set Biot coefficient           = 0.8
+  set Fracture compressibility   = 1e-6
+  set Fluid compressibility      = 1e-10
+  set Reservoir permeability     = 1e-12
+  set Regularization epsilon     = 5, 1
+  set Regularization kappa       = 1e-10
+  set Penalization c             = 1e3
+  set Uniform Young modulus      = true
+  set Uniform fracture toughness = true
+end
+
+
+subsection Mesh
+  set Initial global refinement steps = 3
+  set Local refinement steps          = 2
+  set Local refinement region         = 0.4, 0.6, 0.4, 0.6
+  set Adaptive steps                  = 0
+  set Adaptive phi value              = 0.6
+  set Mesh file                       = input/unit_square.msh
+end
+
+
+subsection Solver
+  set Time stepping table = (0, 1e-3);
+  set Max Newton steps  = 20
+  set Minimum time step = 1e-9
+  set Newton tolerance  = 1e-9
+  set T max             = 10
+end
+
+subsection Postprocessing
+  set Functions = boundary_load
+  set Arguments = (3);
+end
+
+

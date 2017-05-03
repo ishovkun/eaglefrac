@@ -5,6 +5,7 @@
 #include <boost/any.hpp>
 #include <cstdlib>
 // #include <typeinfo>  // for typeinfo :-)
+#include <deal.II/base/conditional_ostream.h>
 
 // custom modules
 #include <BitMap.hpp>
@@ -139,8 +140,6 @@ namespace InputData {
     Function<dim>
       *get_young_modulus,
       *get_poisson_ratio,
-      *get_lame_constant,
-      *get_shear_modulus,
       *get_fracture_toughness;
 
   };
@@ -187,6 +186,7 @@ namespace InputData {
     void assign_parameters();
     void check_input();
 
+			// 	pressure_owned_solution = pressure_max_value;
     ParameterHandler prm;
 		ConditionalOStream &pcout;
 
@@ -231,7 +231,20 @@ namespace InputData {
           fracture_toughness_limits.first,
           fracture_toughness_limits.second);
 
-    //   this->get_fracture_toughness->value(p, 0) << std::endl;
+    if (uniform_young_modulus)
+      this->get_young_modulus =
+        new ConstantFunction<dim>(this->young_modulus, 1);
+    else
+      this->get_young_modulus =
+        new BitMap::BitMapFunction<dim>(
+          bitmap_file_name,
+          bitmap_range[0].first, bitmap_range[0].second,
+          bitmap_range[1].first, bitmap_range[1].second,
+          young_modulus_limits.first,
+          young_modulus_limits.second);
+
+      this->get_poisson_ratio =
+        new ConstantFunction<dim>(this->poisson_ratio, 1);
   }  // eom
 
   template <int dim>

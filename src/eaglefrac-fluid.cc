@@ -344,8 +344,7 @@ namespace EagleFrac
 
     redo_time_step:
 			pcout  << std::endl
-						<< "===============================================" << std::endl
-						<< "===============================================" << std::endl
+						<< "###############################################" << std::endl
             << "Time: "
             << std::defaultfloat << time
 						<< "\tStep:"
@@ -361,9 +360,9 @@ namespace EagleFrac
       IndexSet old_active_set(phase_field_solver.active_set);
 
 			TrilinosWrappers::MPI::BlockVector pressure_tmp =
-				pressure_solver.solution;
+				pressure_solver.relevant_solution;
 			TrilinosWrappers::MPI::BlockVector solid_tmp =
-				phase_field_solver.solution;
+				phase_field_solver.relevant_solution;
 
 				// pcout << "Solving pressure" << std::endl;
 				// pressure_solver.assemble_system(phase_field_solver.relevant_solution,
@@ -435,6 +434,9 @@ namespace EagleFrac
 						phase_field_solver.solve_coupled_newton_step(
 							pressure_solver.relevant_solution, time_steps);
 
+					phase_field_solver.relevant_solution =
+						phase_field_solver.solution;
+
 					pcout << newton_step_results.first << "\t";
 					pcout << newton_step_results.second << "\t";
 
@@ -480,7 +482,7 @@ namespace EagleFrac
 	        }
 
 			fss_error = compute_fss_error(
-				phase_field_solver.solution, pressure_solver.solution,
+				phase_field_solver.relevant_solution, pressure_solver.relevant_solution,
 				solid_tmp, pressure_tmp
 			);
 

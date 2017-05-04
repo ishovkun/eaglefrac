@@ -22,6 +22,11 @@ namespace RHS
 
 		virtual double value(const Point<dim> &p,
 												 const unsigned int component=0) const;
+    virtual void point_values(const std::vector<Point<dim> > &points,
+															std::vector<double>            &dst) const;
+
+    void set_location_radius(const double lr);
+
 		// set_control(const double value, const int control);
 		void locate(const DoFHandler<dim>  &dof_handler,
 								MPI_Comm 				 &mpi_communicator);
@@ -48,6 +53,12 @@ namespace RHS
 
 
 	template <int dim> void
+	Well<dim>::set_location_radius(const double lr)
+	{
+		location_radius = lr;
+	}  // eom
+
+	template <int dim> void
 	Well<dim>::locate(const DoFHandler<dim>  &dof_handler,
 										MPI_Comm 				 			 &mpi_communicator)
 	{ // in this function we find the coordinates of the cell center that
@@ -61,25 +72,45 @@ namespace RHS
 	    endc = dof_handler.end();
 
 	  for (; cell != endc; ++cell)
-	  {
       if (cell->is_locally_owned())
 			{
 				auto const &p = cell->center();
-				double d = true_location.distance(p);
+				const double d = true_location.distance(p);
 				if (d < min_distance)
 				{
 					min_distance = d;
 					best_cell = p;
 				}
-			}  // end if local cell
-		}  // end cell loop
+			}  // end cell loop
 
-    double overall_min_distance = Utilities::MPI::min(min_distance, mpi_communicator);
-		if (min_distance == overall_min_distance)
+    const double overall_min_distance =
+			Utilities::MPI::min(min_distance, mpi_communicator);
+
+		/* several processors can actually have cells at the same distance from
+			the true source location.
+			The following trick should let only one processor (with the minimum number)
+			to set the source.
+			if we sum the processor number and minimum distance this should be enough
+			to uniquely set the well
+		*/
+		const unsigned int this_mpi_process =
+			Utilities::MPI::this_mpi_process(mpi_communicator);
+
+		const double magic_number =
+			min_distance + static_cast<double>(this_mpi_process);
+
+		const double min_magic_number =
+			Utilities::MPI::min(magic_number, mpi_communicator);
+
+		const	double large_num = std::numeric_limits<double>::max();
+
+		if (min_distance == overall_min_distance &&
+				magic_number == min_magic_number)
+		{
 			closest_cell_center = best_cell;
+		}
 		else  // assign to some cell far away
 		{
-			double large_num = std::numeric_limits<double>::max();
 			for (int i=0; i<dim; ++i)
 				closest_cell_center[i] = large_num;
 		}
@@ -110,6 +141,18 @@ namespace RHS
 		}
 		else
 			return 0.0;
-	}
+	}  // eom
+
+
+	template <int dim> void
+	Well<dim>::point_values(const std::vector<Point<dim> > &points,
+													std::vector<double>            &dst) const
+  {
+		Assert(dst.size() == points.size(),
+					 ExcDimensionMismatch(dst.size(), points.size()));
+
+		for (unsigned int p=0; p<points.size(); ++p)
+			dst[p] = Well<dim>::value(points[p], 0);
+  }  // eom
 
 }  // end of namespace

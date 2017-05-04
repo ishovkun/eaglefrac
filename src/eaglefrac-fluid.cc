@@ -151,10 +151,18 @@ namespace EagleFrac
     tmp[1] = &phase_field_solver.old_solution;
     tmp[2] = &phase_field_solver.old_old_solution;
 
+    std::vector<const TrilinosWrappers::MPI::BlockVector *> tmp_pressure(2);
+    tmp_pressure[0] = &pressure_solver.relevant_solution;
+    tmp_pressure[1] = &pressure_solver.old_solution;
+
     parallel::distributed::SolutionTransfer<dim, TrilinosWrappers::MPI::BlockVector>
         solution_transfer(phase_field_solver.dof_handler);
 
+    parallel::distributed::SolutionTransfer<dim, TrilinosWrappers::MPI::BlockVector>
+        solution_transfer_pressure(pressure_solver.get_dof_handler());
+
     solution_transfer.prepare_for_coarsening_and_refinement(tmp);
+    solution_transfer_pressure.prepare_for_coarsening_and_refinement(tmp_pressure);
     triangulation.execute_coarsening_and_refinement();
 
 		setup_dofs();
@@ -163,14 +171,27 @@ namespace EagleFrac
       tmp_owned1(phase_field_solver.owned_partitioning, mpi_communicator),
       tmp_owned2(phase_field_solver.owned_partitioning, mpi_communicator);
 
+    TrilinosWrappers::MPI::BlockVector
+      tmp_pressure_owned(pressure_solver.owned_partitioning, mpi_communicator);
+      // tmp_pressure_owned2(pressure_solver.owned_partitioning, mpi_communicator);
+
     std::vector<TrilinosWrappers::MPI::BlockVector *> tmp1(3);
     tmp1[0] = &phase_field_solver.solution;
     tmp1[1] = &tmp_owned1;
     tmp1[2] = &tmp_owned2;
 
+    std::vector<TrilinosWrappers::MPI::BlockVector *> tmp1_pressure(2);
+    tmp1_pressure[0] = &pressure_solver.solution;
+    tmp1_pressure[1] = &tmp_pressure_owned;
+
     solution_transfer.interpolate(tmp1);
+    solution_transfer_pressure.interpolate(tmp1_pressure);
+
     phase_field_solver.old_solution = tmp_owned1;
     phase_field_solver.old_old_solution = tmp_owned2;
+
+		pressure_solver.old_solution = tmp_pressure_owned;
+		pressure_solver.relevant_solution = pressure_solver.solution;
 
   }  // eom
 
@@ -250,15 +271,16 @@ namespace EagleFrac
 																		pressure_fe,
 																		pressure_extractor);
 
+
+    Point<dim> center(0.5, 0.5);
+		data.wells.push_back( new RHS::Well<dim>(center, 1e-1) );
+		// data.wells[0]->locate(pressure_dof_handler, mpi_communicator);
     // debug input
     // Point<dim> p(3e-3, 0.01), p1(3e-3, 0.01905);
     // pcout << "toughness " << data.get_fracture_toughness->value(p, 0) << std::endl;
 		// pcout << data.lame_constant << std::endl;
 		// pcout << data.shear_modulus << std::endl;
 		// pcout << data.displacement_boundary_velocities[0]*1 << std::endl;
-    Point<dim> center(0.5, 0.5);
-		data.wells.push_back( new RHS::Well<dim>(center, 1e+0) );
-		data.wells[0]->locate(pressure_dof_handler, mpi_communicator);
     // return;
 
     prepare_output_directories();
@@ -273,6 +295,9 @@ namespace EagleFrac
 
     minimum_mesh_size /= std::pow(2, max_refinement_level);
     data.compute_mesh_dependent_parameters(minimum_mesh_size);
+
+		// for (unsigned int w=0; w<data.wells.size(); ++w)
+		// 	data.wells[w]->set_location_radius(minimum_mesh_size);
 
     pcout << "min mesh size " << minimum_mesh_size << std::endl;
 
@@ -290,9 +315,7 @@ namespace EagleFrac
 		}
 
 
-		// data.wells[0]->locate(pressure_dof_handler, mpi_communicator);
-
-    // // Initial values
+    // Initial values
 		VectorTools::interpolate(
 			phase_field_solver.dof_handler,
 			 InitialValues::Defects<dim>(data.defect_coordinates,
@@ -300,10 +323,11 @@ namespace EagleFrac
 																 	 data.regularization_parameter_epsilon/2),
 		   phase_field_solver.solution
 		 );
+
     // phase_field_solver.solution.block(1) = 1;
     // phase_field_solver.solution.block(0) = 0;
     // phase_field_solver.old_solution.block(1) = phase_field_solver.solution.block(1);
-		//
+
     double time = 0;
     double time_step = data.get_time_step(time);
     double old_time_step = time_step;
@@ -319,7 +343,9 @@ namespace EagleFrac
 			pressure_solver.old_solution = pressure_solver.solution;
 
     redo_time_step:
-      pcout << std::endl
+			pcout  << std::endl
+						<< "===============================================" << std::endl
+						<< "===============================================" << std::endl
             << "Time: "
             << std::defaultfloat << time
 						<< "\tStep:"
@@ -339,27 +365,38 @@ namespace EagleFrac
 			TrilinosWrappers::MPI::BlockVector solid_tmp =
 				phase_field_solver.solution;
 
-			// phase_field_tmp - phase_field_solver.solution;
+				// pcout << "Solving pressure" << std::endl;
+				// pressure_solver.assemble_system(phase_field_solver.relevant_solution,
+				// 																phase_field_solver.old_solution,
+				// 																time_step);
+		    // pressure_solver.solve();
+				// pressure_solver.relevant_solution = pressure_solver.solution;
 
 			double fss_error = std::numeric_limits<double>::max();
 			unsigned int fss_step = 0;
-		  while (fss_step < 10)
+		  while (fss_step < 20)
+		  // while (false)
 			{
-				if (time_step_number > 1 || fss_step > 0)
+				pcout // << std::endl
+							<< "-----------------------------------------------" << std::endl;
+				pcout << "FSS iteration " << fss_step << std::endl;
+				// if (time_step_number > 1 || fss_step > 0)
+				if (time_step_number > 1)
 				{
-					pcout << "Solving pressure" << std::endl;
+					pcout << "Pressure solver: ";
 					pressure_solver.assemble_system(phase_field_solver.relevant_solution,
 																					phase_field_solver.old_solution,
 																					time_step);
-			    pressure_solver.solve();
+			    const unsigned int n_pressure_iter = pressure_solver.solve();
 					pressure_solver.relevant_solution = pressure_solver.solution;
-					// return;
+					pcout << n_pressure_iter << std::endl;
 				}
 
 				print_header();
 	      int pds_step = 0;  // solid system iteration number
 	      const double newton_tolerance = data.newton_tolerance;
 	      while (pds_step < data.max_newton_iter)
+	      // while (false)
 	      {
 					// pcout << fss_step << "\t";
 					pcout << pds_step << "\t";
@@ -378,8 +415,7 @@ namespace EagleFrac
 	          error = phase_field_solver.residual_norm();
 
 						// print active set and error
-	          pcout << phase_field_solver.active_set_size()
-									<< "\t";
+	          pcout << phase_field_solver.active_set_size() << "\t";
 						std::cout.precision(3);
 	          pcout << std::scientific << error << "\t";
 	          std::cout.unsetf(std::ios_base::scientific);
@@ -427,22 +463,22 @@ namespace EagleFrac
 	        phase_field_solver.use_old_time_step_phi = true;
 	        goto redo_time_step;
 	      }  // end cut time step
-			//
-	    //   // do adaptive refinement if needed
-	    //   if (data.n_adaptive_steps > 0)
-	    //     if (Mesher::prepare_phase_field_refinement(phase_field_solver,
-	    //                                                data.phi_refinement_value,
-	    //                                                max_refinement_level))
-	    //     {
-	    //       pcout << std::endl
-	    //            << "Adapting mesh"
-	    //            << std::endl
-			// 					 << "Redo time step"
-	    //            << std::endl;
-	    //       exectute_adaptive_refinement();
-	    //       goto redo_time_step;
-	    //     }
-			//
+
+	      // do adaptive refinement if needed
+	      if (data.n_adaptive_steps > 0)
+	        if (Mesher::prepare_phase_field_refinement(phase_field_solver,
+	                                                   data.phi_refinement_value,
+	                                                   max_refinement_level))
+	        {
+	          pcout << std::endl
+	               << "Adapting mesh"
+	               << std::endl
+								 << "Redo time step"
+	               << std::endl;
+	          exectute_adaptive_refinement();
+	          goto redo_time_step;
+	        }
+
 			fss_error = compute_fss_error(
 				phase_field_solver.solution, pressure_solver.solution,
 				solid_tmp, pressure_tmp
@@ -450,7 +486,11 @@ namespace EagleFrac
 
 			pcout << "FSS error: " << fss_error << std::endl;
 
-			if (fss_error < newton_tolerance) break;
+			if (fss_error < 1e-4)  // value from the paper
+			{
+				pcout << "FSS converged " << std::endl;
+				break;
+			}
 
 			pressure_tmp = pressure_solver.solution;
 			solid_tmp = phase_field_solver.solution;
@@ -487,14 +527,17 @@ namespace EagleFrac
 		auto & solid_df = phase_field_solver.dof_handler;
 		auto & pressure_df = pressure_solver.get_dof_handler();
 
-		auto & pressure_constraints = pressure_solver.get_constraint_matrix();
+		auto & pressure_hanging_nodes = pressure_solver.get_constraint_matrix();
+		auto & solid_hanging_nodes = phase_field_solver.hanging_nodes_constraints;
 
 		auto & pressure_fe = pressure_solver.get_fe();
-  	const unsigned int solid_dofs_per_cell = phase_field_solver.fe.dofs_per_cell;
+		auto & solid_fe    = phase_field_solver.fe;
+  	const unsigned int solid_dofs_per_cell    = solid_fe.dofs_per_cell;
   	const unsigned int pressure_dofs_per_cell = pressure_fe.dofs_per_cell;
 
-  	std::vector<types::global_dof_index> local_dof_indices_solid(solid_dofs_per_cell);
-  	std::vector<types::global_dof_index> local_dof_indices_pressure(pressure_dofs_per_cell);
+  	std::vector<types::global_dof_index>
+			local_dof_indices_solid(solid_dofs_per_cell),
+			local_dof_indices_pressure(pressure_dofs_per_cell);
 
   	std::vector<bool> solid_dof_touched(solid_df.n_dofs(), false);
   	std::vector<bool> pressure_dof_touched(pressure_df.n_dofs(), false);
@@ -504,7 +547,10 @@ namespace EagleFrac
 	    pressure_cell = pressure_df.begin_active(),
 	    endc = solid_df.end();
 
-		double error = 0;
+		// double error = 0;
+		double u_error = 0;
+		double phi_error = 0;
+		double p_error = 0;
 
   	for (; solid_cell != endc; ++solid_cell, ++pressure_cell)
     	if (!solid_cell->is_artificial())
@@ -514,31 +560,46 @@ namespace EagleFrac
 
 				for (unsigned int i=0; i<solid_dofs_per_cell; ++i)
 				{
-						const unsigned int index = 	local_dof_indices_solid[i];
-						if(solid_dof_touched[index] &&
-							 !phase_field_solver.hanging_nodes_constraints.is_constrained(index))
+						const unsigned int index = local_dof_indices_solid[i];
+        		const int component = solid_fe.system_to_component_index(i).first;
+						// pcout << "Constrained "
+						// 			<< solid_hanging_nodes.is_constrained(index)
+						// 			<< " touched "
+						// 			<< solid_dof_touched[index]
+						// 			<< std::endl;
+						if(solid_dof_touched[index] == false &&
+							 !solid_hanging_nodes.is_constrained(index))
 				  	{
 							solid_dof_touched[index] = true;
-							error +=
+							// error +=
+							double e =
 								std::pow(solid_solution[index] - old_iter_solid_solution[index], 2);
+							if (component == dim)
+								phi_error += e;
+							else
+								u_error += e;
 				 		}
 				}  // end dof loop
 
 				for (unsigned int i=0; i<pressure_dofs_per_cell; ++i)
 				{
 					const unsigned int index = 	local_dof_indices_pressure[i];
-					if(pressure_dof_touched[index] &&
-						 !pressure_constraints.is_constrained(index))
+					if(pressure_dof_touched[index] == false &&
+						 !pressure_hanging_nodes.is_constrained(index))
 					{
 						pressure_dof_touched[index] = true;
-						error +=
+						p_error +=
 							std::pow(pressure_solution[index] - old_iter_pressure_solution[index], 2);
 					}
 				}  // end dof loop
 
 			}  // end cell loop
 
-		error = Utilities::MPI::sum(error, mpi_communicator);
+		phi_error = Utilities::MPI::sum(phi_error, mpi_communicator);
+		u_error = Utilities::MPI::sum(u_error, mpi_communicator);
+		p_error = Utilities::MPI::sum(p_error, mpi_communicator);
+		double error = std::max(phi_error, u_error);
+		error = std::max(error, p_error);
 		error = std::sqrt(error);
 		return error;
 	}  // eom

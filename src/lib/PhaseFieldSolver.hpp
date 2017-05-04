@@ -1003,7 +1003,6 @@ impose_node_displacement(const std::vector < Point<dim> > &displacement_points,
   // loop throught vertices and find nodes that are closest to points
   // store cells that are closest
   const int n_displacement_points = displacement_points.size();
-  std::vector< Point<dim> > closest_vertex_coordinates;
 
   // set unrealistic cell number and distance to compare with later on
   std::vector<double> min_distances(n_displacement_points);

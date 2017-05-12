@@ -281,7 +281,7 @@ namespace FluidSolvers
 					double w = u_values[q].norm();  // absolute value
 					double perm_f = 1.0/12.0*w*w;   // fracture perm from lubrication theory
 					// perm_f = 10*data.perm_res;
-					perm_f = 1e-11;
+					// perm_f = 1e-11;
 
 					// interpolate pereability
 					double K_eff =

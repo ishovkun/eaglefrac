@@ -40,7 +40,7 @@ namespace EagleFrac
     void read_mesh();
     void setup_dofs();
     void impose_displacement_on_solution();
-    void output_results(int time_step_number); //const;
+    void output_results(int time_step_number, double time); //const;
     void refine_mesh();
     void execute_postprocessing(const double time);
     void exectute_adaptive_refinement();
@@ -68,6 +68,10 @@ namespace EagleFrac
 		FluidSolvers::PressureSolver<dim> pressure_solver;
 
     std::string input_file_name, case_name;
+
+		// this object contains time records for output
+		// this allows having a real time value in Paraview
+		std::vector< std::pair<double,std::string> > times_and_names;
 
 		// FESystem<dim> pressure_fe;
 		// TrilinosWrappers::MPI::BlockVector pressure_owned_solution;
@@ -489,7 +493,7 @@ namespace EagleFrac
 			}  // end fss iteration
 
       phase_field_solver.truncate_phase_field();
-      output_results(time_step_number);
+      output_results(time_step_number, time);
 
       old_time_step = time_step;
 
@@ -674,7 +678,7 @@ namespace EagleFrac
 
 
   template <int dim>
-  void SinglePhaseModel<dim>::output_results(int time_step_number) // const
+  void SinglePhaseModel<dim>::output_results(int time_step_number, double time) // const
   {
     // Add data vectors to output
     std::vector<std::string> solution_names(dim, "displacement");
@@ -722,7 +726,7 @@ namespace EagleFrac
     std::ofstream output ((filename + ".vtu").c_str());
     data_out.write_vtu(output);
 
-    // Write master file
+    // Write master pbtu and pvd files
     if (Utilities::MPI::this_mpi_process(mpi_communicator) == 0)
       {
         std::vector<std::string> filenames;
@@ -736,11 +740,20 @@ namespace EagleFrac
                               Utilities::int_to_string (i,
                                                         n_processor_digits) +
                               ".vtu");
+        std::string pvtu_filename =
+				  "solution-" +
+          Utilities::int_to_string(time_step_number, n_time_step_digits) +
+          ".pvtu";
         std::ofstream
-          master_output(("./" + case_name + "/solution-" +
-                         Utilities::int_to_string(time_step_number, n_time_step_digits) +
-                         ".pvtu").c_str());
+          master_output(("./" + case_name + "/" + pvtu_filename).c_str());
         data_out.write_pvtu_record(master_output, filenames);
+
+				// write pvd file
+				const std::string pvd_filename = "solution.pvd";
+				times_and_names.push_back
+					(std::pair<double,std::string> (time, pvtu_filename) );
+				std::ofstream pvd_master(("./" + case_name + "/" + pvd_filename).c_str());
+				data_out.write_pvd_record(pvd_master, times_and_names);
       }  // end master output
   } // EOM
 

@@ -21,11 +21,11 @@ subsection Equation data
   set Poisson ratio              = 0.2
   set Biot coefficient           = 0.9
   set Fracture compressibility   = 1e-6
-  set Fluid compressibility      = 1e-8
+  set Fluid compressibility      = 1e-7
   set Fluid viscosity            = 1e-3
   set Fluid density              = 1000
   set Reservoir permeability     = 1e-14
-  set Regularization epsilon     = 2, 1
+  set Regularization epsilon     = 4, 1
   set Regularization kappa       = 1e-10
   set Penalization c             = 1e3
   set Uniform Young modulus      = true
@@ -44,7 +44,7 @@ end
 
 
 subsection Solver
-  set Time stepping table = (0, 1e-2);
+  set Time stepping table = (0, 1e-1);(2, 1e-2)
   set Max Newton steps    = 40
   set Minimum time step   = 1e-9
   set Newton tolerance    = 1e-9

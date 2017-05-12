@@ -1,4 +1,4 @@
-// #pragma once
+#pragma once
 
 #include <deal.II/base/utilities.h>
 #include <deal.II/base/quadrature_lib.h>
@@ -53,6 +53,10 @@ namespace FluidSolvers
 		const FESystem<dim>   &get_fe();
 		const ConstraintMatrix &get_constraint_matrix();
 		double solve();
+		double 	solution_increment_norm(
+			const TrilinosWrappers::MPI::BlockVector &linearization_point_relevant,
+			const TrilinosWrappers::MPI::BlockVector &old_iter_solution_relevant);
+
 
 	private:
 		// these guys are passed at initialization
@@ -120,7 +124,6 @@ namespace FluidSolvers
 		locally_owned_dofs = dof_handler.locally_owned_dofs();
     DoFTools::extract_locally_relevant_dofs(dof_handler,
                                             locally_relevant_dofs);
-    // pressure_owned_solution.reinit(locally_owned_dofs, mpi_communicator);
 
 		owned_partitioning.clear();
 		relevant_partitioning.clear();
@@ -128,29 +131,32 @@ namespace FluidSolvers
 		relevant_partitioning.push_back(locally_relevant_dofs);
 
 		{ // Constraints
-			// only hanging nodes for now
+			// only hanging nodes
 			constraints.clear();
 			constraints.reinit(locally_relevant_dofs);
 	    DoFTools::make_hanging_node_constraints(dof_handler, constraints);
     	constraints.close();
 		}
 
-		// Vectors and matrices
-		relevant_solution.reinit(relevant_partitioning, mpi_communicator);
-		solution.reinit(owned_partitioning, mpi_communicator);
-		old_solution.reinit(relevant_partitioning, mpi_communicator);
-    rhs_vector.reinit(owned_partitioning, relevant_partitioning,
-                      mpi_communicator, /* omit-zeros=*/ true);
-
-    TrilinosWrappers::BlockSparsityPattern sp(owned_partitioning,
-                                              owned_partitioning,
-                                              relevant_partitioning,
-                                              mpi_communicator);
-    DoFTools::make_sparsity_pattern(dof_handler, sp, constraints,
-                                    /*  keep_constrained_dofs = */ false,
-                                    Utilities::MPI::this_mpi_process(mpi_communicator));
-    sp.compress();
-    system_matrix.reinit(sp);
+		{ // system matrix
+	    system_matrix.clear();
+	    TrilinosWrappers::BlockSparsityPattern sp(owned_partitioning,
+	                                              owned_partitioning,
+	                                              relevant_partitioning,
+	                                              mpi_communicator);
+	    DoFTools::make_sparsity_pattern(dof_handler, sp, constraints,
+	                                    /*  keep_constrained_dofs = */ false,
+	                                    Utilities::MPI::this_mpi_process(mpi_communicator));
+	    sp.compress();
+	    system_matrix.reinit(sp);
+		}
+		{ // vectors
+			solution.reinit(owned_partitioning, mpi_communicator);
+			relevant_solution.reinit(relevant_partitioning, mpi_communicator);
+			old_solution.reinit(relevant_partitioning, mpi_communicator);
+	    rhs_vector.reinit(owned_partitioning, relevant_partitioning,
+	                      mpi_communicator, /* omit-zeros=*/ true);
+		}
 	}  // eom
 
 	template <int dim> void
@@ -167,7 +173,8 @@ namespace FluidSolvers
                           	update_quadrature_points |
                           	update_JxW_values);
   	FEValues<dim> fe_values_solid(fe_solid, quadrature_formula,
-                          				update_values | update_gradients);
+                          				update_values | update_gradients |
+																	update_quadrature_points);
 
 		const FEValuesExtractors::Vector displacement(0);
 		const FEValuesExtractors::Scalar phase_field(dim);
@@ -187,6 +194,7 @@ namespace FluidSolvers
 		std::vector<double>  				 div_old_u_values(n_q_points);
 		// std::vector< Tensor<1,dim> > old_u_values(n_q_points);
 
+		// shape functions
 		std::vector<double>  				 xi_p(dofs_per_cell);
   	std::vector< Tensor<1,dim> > grad_xi_p(dofs_per_cell);
 
@@ -209,56 +217,54 @@ namespace FluidSolvers
 				fe_values.reinit(cell);
 				fe_values_solid.reinit(cell_solid);
 
-	      fe_values_solid[phase_field].get_function_values(solution_solid,
-                                         								 phi_values);
-	      fe_values_solid[displacement].get_function_values(solution_solid,
-                                         								  u_values);
+				// extract solution values
+	      fe_values_solid[phase_field].get_function_values(solution_solid, phi_values);
+	      fe_values_solid[displacement].get_function_values(solution_solid, u_values);
 	      fe_values_solid[displacement].get_function_divergences(solution_solid,
                                          								  	 	 div_u_values);
 	      fe_values_solid[displacement].get_function_divergences(old_solution_solid,
                                          								  		 div_old_u_values);
-	      fe_values[pressure].get_function_values(relevant_solution,
-                               								  p_values);
-	      fe_values[pressure].get_function_values(old_solution,
-                               								  old_p_values);
+	      fe_values[pressure].get_function_values(relevant_solution, p_values);
+	      fe_values[pressure].get_function_values(old_solution, old_p_values);
 
+				auto & quadrature_points = fe_values.get_quadrature_points();
 
-	      double E = data.get_young_modulus->value(cell->center(), 0);
-				double nu = data.get_poisson_ratio->value(cell->center(), 0);
-				double bulk_modulus = E/3./(1.-2.*nu);
-				double grain_bulk_modulus = bulk_modulus/(1.-data.biot_coef);
-				double modulus_N = grain_bulk_modulus*(data.biot_coef - data.porosity);
-				double modulus_M = (modulus_N/data.fluid_compressibility) /
-													 (modulus_N*data.porosity + 1./data.fluid_compressibility);
+				// compute poroelastic coefficients
+	      double E = data.get_young_modulus->value(cell_solid->center(), 0);
+				double nu = data.get_poisson_ratio->value(cell_solid->center(), 0);
+				double bulk_modulus = E/3.0/(1.0-2.0*nu);
 
-				// auto  & quadrature_points = fe_values.get_quadrature_points();
-				double source_term = 0;
-				for (unsigned int k=0; k<data.wells.size(); ++k)
-					source_term += data.wells[k]->value(cell->center(), 0);
+				// reciprocal poroelastic modulus M
+				double recM =
+					(data.biot_coef - data.porosity)*
+					(1.0-data.biot_coef)/bulk_modulus
+					+
+					data.porosity*data.fluid_compressibility;
 
+				/* optimal FSS comvergence coefficient
+				ref: Convergence of iterative coupling for coupledflow and geomechanics
+				Mikelic, Wheeler, 2012 */
+				// this is for 3D
+        // double beta = 0.5*data.biot_coef*data.biot_coef/bulk_modulus;
+				// this works good for 2D
+        double beta = 0.25*data.biot_coef*data.biot_coef/bulk_modulus;
+
+				// double source_term = 0;
+				// for (unsigned int k=0; k<data.wells.size(); ++k)
+				// 	source_term += data.wells[k]->value(cell->center(), 0);
+
+				// pcout << std::endl;
 				// pcout << "poro " << data.porosity << std::endl;
-				// pcout << "c_fluid " << data.fluid_compressibility << std::endl;
-				// pcout << "perm_res " << data.perm_res << std::endl;
-				// pcout << "viscosity " << data.fluid_viscosity << std::endl;
-				// pcout << "c_f " << data.fracture_compressibility << std::endl;
-				// pcout << "density " << data.fluid_density << std::endl;
-				// pcout << "M modulus " << modulus_M << std::endl;
 
 				for (unsigned int q=0; q<n_q_points; ++q)
 				{
+					// values that separate fracture, reservoir, and cake zone
 					double cx = 0.1;
 					double c1 = 0.5 - cx;
 					double c2 = 0.5 + cx;
-					// this is a simplistic way to compute frac width but is good for now
-					double w = u_values[q].norm();  // absolute value
-					// if (w<1e-15) w = 1e-5;
-					double perm_f = 1.0/12.0*w*w;   // fracture perm from lubrication theory
-					perm_f = 50*data.perm_res;   // fracture perm from lubrication theory
-
-					// Indicator function
+					// Indicator functions
 					double xi_f = (c2 - phi_values[q])/(c2 - c1);
 					double xi_r = (phi_values[q] - c1)/(c2 - c1);
-
 					if (phi_values[q] <= c1)
 					{
 						xi_f = 1.0;
@@ -270,35 +276,39 @@ namespace FluidSolvers
 						xi_r = 1.0;
 					}
 
-					double div_delta_u = div_u_values[q] - div_old_u_values[q];
+					// compute perm
+					// this is a simplistic way to compute frac width but is good for now
+					double w = u_values[q].norm();  // absolute value
+					double perm_f = 1.0/12.0*w*w;   // fracture perm from lubrication theory
+					// perm_f = 10*data.perm_res;
+					perm_f = 1e-11;
 
-					// double source_term = 0;
-					// for (unsigned int k=0; k<data.wells.size(); ++k)
-					// 	source_term += data.wells[k]->value(quadrature_points[q], 0);
+					// interpolate pereability
+					double K_eff =
+						(data.perm_res + xi_f*(perm_f - data.perm_res))/data.fluid_viscosity;
+					K_eff = std::max(data.perm_res/data.fluid_viscosity, K_eff);
+
+					double source_term = 0;
+					for (unsigned int k=0; k<data.wells.size(); ++k)
+						source_term += data.wells[k]->value(quadrature_points[q], 0);
 					// pcout << "source " << source_term << std::endl;
 
-					// if (source_term > 0)
+					// if (phi_values[q] > 0.1 && phi_values[q] < 0.5)
 					// {
-					// 	pcout << "source " << source_term << std::endl;
 					// 	pcout << "phi " << phi_values[q] << std::endl;
-					// 	pcout << "xi_f " << xi_f << std::endl;
-					// 	pcout << "xi_r " << xi_r << std::endl;
-					// 	pcout << "point " << cell->center() << std::endl;
-					// }
-					// interpolate pereability
-					// double K_eff = (perm_f*xi_f + data.perm_res)/data.fluid_viscosity;
-
-
 					// pcout << "xi_f " << xi_f << std::endl;
 					// pcout << "xi_r " << xi_r << std::endl;
-					// pcout << "phi " << phi_values[q] << std::endl;
+					// 	pcout << "K_r " << data.perm_res << std::endl;
+					// 	pcout << "K_f " << perm_f << std::endl;
+					// 	pcout << "K_eff " << K_eff*data.fluid_viscosity << std::endl;
+					// }
 
-					// compute some fe-dependent props
+					// compute shape functions
 	        for (unsigned int k=0; k<dofs_per_cell; ++k)
 					{
 						xi_p[k] = fe_values[pressure].value(k, q);
 						grad_xi_p[k] = fe_values[pressure].gradient(k, q);
-						// pcout << "xi_p " << xi_p[q] << std::endl;
+						// pcout << "xi_p " << xi_p[k] << std::endl;
 					}  // end k loop
 
 	        for (unsigned int i=0; i<dofs_per_cell; ++i)
@@ -306,46 +316,46 @@ namespace FluidSolvers
 	        	for (unsigned int j=0; j<dofs_per_cell; ++j)
 						{
 							double m_r =
-								data.fluid_density/time_step *
-								(1./modulus_M + data.biot_coef*data.biot_coef/bulk_modulus) *
-								xi_p[j]*xi_p[i]
+								(recM + beta) *
+								xi_p[j]/time_step*xi_p[i]
 								+
-								data.perm_res*data.fluid_density/data.fluid_viscosity *
-								grad_xi_p[j]*grad_xi_p[i];
+								K_eff*grad_xi_p[j]*grad_xi_p[i]
+								;
 
 							double m_f =
-								data.fluid_density*data.fracture_compressibility/time_step *
-								xi_p[j]*xi_p[i]
+								data.fracture_compressibility *
+								xi_p[j]/time_step*xi_p[i]
 								+
-								perm_f*data.fluid_density/data.fluid_viscosity *
-								grad_xi_p[j]*grad_xi_p[i];
+								K_eff*grad_xi_p[j]*grad_xi_p[i]
+								;
 
 							local_matrix(i, j) += (xi_r*m_r + xi_f*m_f)*fe_values.JxW(q);
-
-							// local_matrix(i, jj)
 						}  // end j loop
 
+						// pcout <<
+						// 	(1./modulus_M + data.biot_coef*data.biot_coef/bulk_modulus)
+						// 	// * old_p_values[q]/time_step
+						// 	<< std::endl;
+
 						double rhs_r =
-							data.fluid_density/time_step *
-							(1./modulus_M + data.biot_coef*data.biot_coef/bulk_modulus) *
-							old_p_values[q]*xi_p[i]
+							(recM + beta) *
+							old_p_values[q]/time_step*xi_p[i]
 							-
-							data.biot_coef/time_step*div_delta_u*xi_p[i]
+							data.biot_coef*
+							(div_u_values[q] - div_old_u_values[q])/time_step*xi_p[i]
 							// +
-							// data.perm_res*data.fluid_density/data.fluid_viscosity *
-							// data.fluid_density*g_vector*grad_xi_p[i]
+							// K_eff*data.fluid_density*g_vector*grad_xi_p[i]
 							+
-							data.biot_coef*data.biot_coef/bulk_modulus *
-							(p_values[q] - old_p_values[q])/time_step*xi_p[i]
+							beta*(p_values[q] - old_p_values[q])/time_step*xi_p[i]
 							+
 							source_term*xi_p[i]
 							;
 
 						double rhs_f =
-							data.fluid_density*data.fracture_compressibility/time_step *
-							old_p_values[q]*xi_p[i]
+							data.fracture_compressibility *
+							old_p_values[q]/time_step*xi_p[i]
 							// +
-							// perm_f*data.fluid_density/data.fluid_viscosity *
+							// Keff *
 							// data.fluid_density*g_vector*grad_xi_p[i]
 							+
 							source_term*xi_p[i]
@@ -368,6 +378,7 @@ namespace FluidSolvers
 
     system_matrix.compress(VectorOperation::add);
     rhs_vector.compress(VectorOperation::add);
+		// pcout << "norm " << rhs_vector.l2_norm() << std::endl;
 
 		computing_timer.exit_section();
 	}  // eom
@@ -394,11 +405,14 @@ namespace FluidSolvers
 		return constraints;
 	}
 
+
 	template <int dim> double
 	PressureSolver<dim>::solve()
 	{
   	computing_timer.enter_section("Solve pressure system");
-		SolverControl solver_control (dof_handler.n_dofs(), 1e-12);
+  	const unsigned int max_iter = system_matrix.m();
+		const double tol = 1e-10*rhs_vector.l2_norm();
+		SolverControl solver_control(max_iter, tol);
 		TrilinosWrappers::SolverCG solver(solver_control);
 
 		TrilinosWrappers::PreconditionAMG preconditioner;
@@ -420,4 +434,60 @@ namespace FluidSolvers
 		return solver_control.last_step();
 	}  // eom
 
+
+	template <int dim> double
+	PressureSolver<dim>::
+	solution_increment_norm(
+		const TrilinosWrappers::MPI::BlockVector &linearization_point_relevant,
+		const TrilinosWrappers::MPI::BlockVector &old_iter_solution_relevant)
+	{
+  	const QGauss<dim> quadrature_formula(fe.degree+2);
+  	FEValues<dim> fe_values(fe, quadrature_formula,
+                          	update_values |
+                          	update_quadrature_points |
+                          	update_JxW_values);
+
+		const FEValuesExtractors::Scalar pressure(0);
+
+	  const unsigned int dofs_per_cell = fe.dofs_per_cell;
+	  const unsigned int n_q_points    = quadrature_formula.size();
+
+  	std::vector<double>  				 p_values(n_q_points);
+  	std::vector<double>  				 old_p_values(n_q_points);
+
+  	std::vector<types::global_dof_index> local_dof_indices(dofs_per_cell);
+
+		double error = 0;
+		double area = 0;
+
+	  typename DoFHandler<dim>::active_cell_iterator
+		  cell = dof_handler.begin_active(),
+		  endc = dof_handler.end();
+
+	  for (; cell!=endc; ++cell)
+	    if (cell->is_locally_owned())
+			{
+				fe_values.reinit(cell);
+				double d = cell->diameter();
+				area += d*d;
+
+				fe_values[pressure].get_function_values(
+					linearization_point_relevant, p_values);
+				fe_values[pressure].get_function_values(
+					old_iter_solution_relevant, old_p_values);
+
+					for (unsigned int q=0; q<n_q_points; ++q)
+					{
+						double dp = p_values[q] - old_p_values[q];
+						error += dp*dp*fe_values.JxW(q);
+					}  // end q_point loop
+			} // end cell loop
+
+			error = Utilities::MPI::sum(error, mpi_communicator);
+			area = Utilities::MPI::sum(area, mpi_communicator);
+			error = std::sqrt(error)/area;
+			// pcout << "area " << area << std::endl;
+			return error;
+
+	} // eom
 }  // end of namespace

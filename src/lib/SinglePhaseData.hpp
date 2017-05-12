@@ -110,13 +110,13 @@ namespace InputData
       this->prm.declare_entry("Fluid compressibility", "1e-8",
 															Patterns::Double(1e-15, 1e-3));
       this->prm.declare_entry("Fluid viscosity", "1e-3",
-															Patterns::Double(1e-8, 1.));
+															Patterns::Double(1e-8, 100.));
       this->prm.declare_entry("Reservoir permeability", "1e-12",
 															Patterns::Double(1e-30, 1e-8));
       this->prm.declare_entry("Reservoir porosity", "0.3",
 															Patterns::Double(1e-10, 0.9));
-      this->prm.declare_entry("Fluid density", "1.0",
-															Patterns::Double(1e-2, 10));
+      this->prm.declare_entry("Fluid density", "1000.0",
+															Patterns::Double(1e-2, 1e4));
       // this->prm.declare_entry("Grain compressibility", "0.04e-10",
 			// 												Patterns::Double(1e-20, 1e-5));
 

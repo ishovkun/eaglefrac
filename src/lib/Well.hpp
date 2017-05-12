@@ -47,6 +47,7 @@ namespace RHS
 	Function<dim>(1),
 	true_location(loc),
 	flow_rate(rate),
+	closest_cell_center(loc),
 	location_radius(location_radius_)
 	{
 	}  // eom

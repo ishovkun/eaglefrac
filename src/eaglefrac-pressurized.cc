@@ -402,16 +402,8 @@ namespace EagleFrac
     data.read_input_file(input_file_name);
     read_mesh();
 
-
     // debug input
-    // Point<dim> p(3e-3, 0.01), p1(3e-3, 0.01905);
-    // pcout << "toughness " << data.get_fracture_toughness->value(p, 0) << std::endl;
-    // pcout << "toughness1 " << data.get_fracture_toughness->value(p1, 0) << std::endl;
-		// pcout << data.lame_constant << std::endl;
-		// pcout << data.shear_modulus << std::endl;
-		// pcout << data.displacement_boundary_velocities[0]*1 << std::endl;
     // return;
-
     prepare_output_directories();
 
     // compute_runtime_parameters
@@ -424,16 +416,18 @@ namespace EagleFrac
 
     minimum_mesh_size /= std::pow(2, max_refinement_level);
     data.compute_mesh_dependent_parameters(minimum_mesh_size);
-
     pcout << "min mesh size " << minimum_mesh_size << std::endl;
 
     // local prerefinement
     triangulation.refine_global(data.initial_refinement_level);
-    Mesher::refine_region(triangulation,
-                          data.local_prerefinement_region,
-                          data.n_prerefinement_steps);
-
-    setup_dofs();
+		for (int ref_step=0; ref_step<data.n_prerefinement_steps; ++ref_step)
+		{
+			pcout << "Local_prerefinement" << std::endl;
+			Mesher::refine_region(triangulation,
+														data.local_prerefinement_region,
+														1);
+			setup_dofs();
+		}
 
 		// point phase_field_solver to pressure objects
   	const FEValuesExtractors::Scalar pressure_extractor(0);
@@ -442,18 +436,16 @@ namespace EagleFrac
 																		pressure_extractor);
 
     // Initial values
-		VectorTools::interpolate(phase_field_solver.dof_handler,
-														 InitialValues::Defects<dim>(data.defect_coordinates,
-																												  // idk why e/2, it just works better
-																												 data.regularization_parameter_epsilon/2),
-														 phase_field_solver.solution);
-		// pcout << "Size!!! " << data.defect_coordinates.size() << std::endl;
-		// pcout << "Size1 " << data.defect_coordinates[0].size() << std::endl;
-	  // return;
+		VectorTools::interpolate
+			(phase_field_solver.dof_handler,
+			 InitialValues::Defects<dim>(data.defect_coordinates,
+																	  // idk why e/2, it just works better
+																	 data.regularization_parameter_epsilon/2),
+			 phase_field_solver.solution);
 
     // phase_field_solver.solution.block(1) = 1;
     // phase_field_solver.solution.block(0) = 0;
-    phase_field_solver.old_solution.block(1) = phase_field_solver.solution.block(1);
+    // phase_field_solver.old_solution.block(1) = phase_field_solver.solution.block(1);
 
     double time = 0;
     double time_step = data.get_time_step(time);
@@ -478,34 +470,7 @@ namespace EagleFrac
 
 			double pressure_max_value = (time_step_number > 1) ? 1e3*time: 0.0;
 			pressure_owned_solution = pressure_max_value;
-
-			// pressure_owned_solution = pressure_max_value;
-			// double t_shift = 6.0;
-			// if (time < t_shift)
-			// 	pressure_owned_solution = pressure_max_value;
-			// else
-			// 	{
-			// 		pcout << "shift" << std::endl;
-			// 		pressure_max_value = 1e3*t_shift;
-			// 		pressure_owned_solution = pressure_max_value;
-			// 		double right_border = 0.6;
-			// 		if (time > t_shift && time <= 7.3)
-			// 			right_border = 0.7;
-			// 		if (time > 7.3 && time <= 7.7)
-			// 			right_border = 0.8;
-			// 		if (time > 7.7)
-			// 			right_border = 1.0;
-			// 		// std::pair<double, double> xlim = std::make_pair(0.6, 0.6*1e-1*(time-t_shift));
-			// 		std::pair<double, double> xlim = std::make_pair(0.6, right_border);
-			// 		std::pair<double, double> ylim = std::make_pair(0.42, 0.58);
-			// 		data.get_fracture_toughness =
-			// 			new ToughnessMap<dim>(xlim, ylim, 0.7, 1.0);
-			// 	}
-
-		  // compute_Gc_vector();
 			// impose_pressure_values(pressure_max_value);
-			// return;
-			// pressure_owned_solution = 0*time;
 			pressure_relevant_solution = pressure_owned_solution;
 
       impose_displacement_on_solution(time);
@@ -552,8 +517,14 @@ namespace EagleFrac
           old_active_set = phase_field_solver.active_set;
         }  // end first newton step condition
 
+				std::pair<unsigned int, unsigned int> newton_step_results =
+					phase_field_solver.solve_coupled_newton_step(
+						pressure_relevant_solution, time_steps);
+				phase_field_solver.relevant_solution =
+					phase_field_solver.solution;
 
-
+				pcout << newton_step_results.first << "\t";
+				pcout << newton_step_results.second << "\t";
         // output_results(newton_step);
         newton_step++;
 

@@ -300,7 +300,6 @@ void PhaseFieldSolver<dim>::setup_dofs()
 
   { // Setup vectors
     solution.reinit(owned_partitioning, mpi_communicator);
-    // solution.reinit(relevant_partitioning, mpi_communicator);
     relevant_solution.reinit(relevant_partitioning, mpi_communicator);
     old_solution.reinit(relevant_partitioning, mpi_communicator);
     old_old_solution.reinit(relevant_partitioning, mpi_communicator);
@@ -387,7 +386,9 @@ assemble_coupled_system(const TrilinosWrappers::MPI::BlockVector &linerarization
 	FEValues<dim> *p_pressure_fe_values = NULL;
 	if (include_pressure)
     p_pressure_fe_values = new FEValues<dim>(*p_pressure_fe, quadrature_formula,
-	                     												update_values | update_gradients);
+	                     											 update_values | update_gradients |
+																						 update_quadrature_points);
+  auto & pressure_fe_values	= (*p_pressure_fe_values);
 
   const unsigned int dofs_per_cell = fe.dofs_per_cell;
   const unsigned int n_q_points    = quadrature_formula.size();
@@ -401,22 +402,22 @@ assemble_coupled_system(const TrilinosWrappers::MPI::BlockVector &linerarization
   const FEValuesExtractors::Scalar phase_field(dim);
 
   // FeValues containers
-  std::vector< Tensor<2,dim> > eps_u(dofs_per_cell);
-  std::vector< Tensor<2,dim> > grad_xi_u(dofs_per_cell);
-  std::vector< Tensor<1,dim> > grad_xi_phi(dofs_per_cell);
-  std::vector< Tensor<1,dim> > grad_phi_values(n_q_points);
-  std::vector<double>  				 xi_phi(dofs_per_cell);
-
+  std::vector< Tensor<1,dim> >  xi_u(dofs_per_cell);
+  std::vector<double>  				  xi_phi(dofs_per_cell);
+  std::vector< Tensor<2,dim> >  grad_xi_u(dofs_per_cell);
+  std::vector< Tensor<1,dim> >  grad_xi_phi(dofs_per_cell);
+  std::vector< Tensor<2,dim> >  eps_u(dofs_per_cell);
   // Solution values containers
-  std::vector< Tensor<2, dim> > grad_u_values(n_q_points);
-  Tensor<2, dim> 								strain_tensor_value;
   std::vector<double> 					phi_values(n_q_points),
 						  									old_phi_values(n_q_points),
 						  									old_old_phi_values(n_q_points);
-
-	// std::vector
-	std::vector<double> pressure_values(n_q_points);
-	// std::vector< std::vector<double> > pressure_gradients(n_q_points,)
+  std::vector< Tensor<1, dim> > u_values(n_q_points);
+  std::vector< Tensor<2, dim> > grad_u_values(n_q_points);
+  std::vector< Tensor<1,dim> >  grad_phi_values(n_q_points);
+  Tensor<2, dim> 								strain_tensor_value;
+  // Pressure solution containers
+	std::vector<double> 				  p_values(n_q_points);
+	std::vector< Tensor<1,dim> >  grad_p_values(n_q_points);
 
   // Stress decomposition containers
   ConstitutiveModel::EnergySpectralDecomposition<dim> stress_decomposition;
@@ -457,7 +458,7 @@ assemble_coupled_system(const TrilinosWrappers::MPI::BlockVector &linerarization
 
       fe_values.reinit(cell);
 			if (include_pressure)
-				p_pressure_fe_values->reinit(pressure_cell);
+				pressure_fe_values.reinit(pressure_cell);
 
       fe_values[phase_field].get_function_values(relevant_solution,
                                                  phi_values);
@@ -472,9 +473,13 @@ assemble_coupled_system(const TrilinosWrappers::MPI::BlockVector &linerarization
 
 			if (include_pressure)
 			{
-				(*p_pressure_fe_values)[*p_pressure_extractor].get_function_values
-					(pressure_relevant_solution, pressure_values);
-				// pcout << "Pressure " << pressure_values[2] << std::endl;
+				pressure_fe_values[*p_pressure_extractor].get_function_values
+					(pressure_relevant_solution, p_values);
+				pressure_fe_values[*p_pressure_extractor].get_function_gradients
+					(pressure_relevant_solution, grad_p_values);
+				fe_values[displacement].get_function_values(relevant_solution, u_values);
+				// pcout << "Pressure " << p_values[2] << std::endl;
+				// pcout << "Pressure grad " << grad_p_values[0] << std::endl;
 			}
 
       double G_c = data.get_fracture_toughness->value(cell->center(), 0);
@@ -485,8 +490,6 @@ assemble_coupled_system(const TrilinosWrappers::MPI::BlockVector &linerarization
 
       for (unsigned int q=0; q<n_q_points; ++q)
       {
-        // convert from SymmetricTensor to Tensor
-        // convert_to_tensor(strain_tensor_values[q], strain_tensor_value);
 				strain_tensor_value = 0.5*(grad_u_values[q] + transpose(grad_u_values[q]));
 
         // Simple splitting
@@ -511,7 +514,6 @@ assemble_coupled_system(const TrilinosWrappers::MPI::BlockVector &linerarization
                                                         stress_tensor_plus,
                                                         stress_tensor_minus);
 
-        double phi_value = phi_values[q];
         double old_phi_value = old_phi_values[q];
         double old_old_phi_value = old_old_phi_values[q];
         const double time_step = time_steps.first;
@@ -520,7 +522,6 @@ assemble_coupled_system(const TrilinosWrappers::MPI::BlockVector &linerarization
 
         double phi_tilda = old_phi_value + dphi_dt_old*time_step;
         phi_tilda = std::max(std::min(1.0, phi_tilda), 0.0);
-
         if (use_old_time_step_phi)
           phi_tilda = old_phi_value;
 
@@ -531,7 +532,9 @@ assemble_coupled_system(const TrilinosWrappers::MPI::BlockVector &linerarization
           xi_phi[k]      = fe_values[phase_field].value(k,q);
           grad_xi_phi[k] = fe_values[phase_field].gradient(k, q);
 					grad_xi_u[k]   = fe_values[displacement].gradient(k, q);
-					eps_u[k] = 0.5*(grad_xi_u[k] + transpose(grad_xi_u[k]));
+					eps_u[k] 			 = 0.5*(grad_xi_u[k] + transpose(grad_xi_u[k]));
+					if (include_pressure)
+						xi_u[k] = fe_values[displacement].value(k,q);
 
           if (assemble_matrix)
           {
@@ -567,28 +570,47 @@ assemble_coupled_system(const TrilinosWrappers::MPI::BlockVector &linerarization
         for (unsigned int i=0; i<dofs_per_cell; ++i)
         {
           double rhs_u =
-                  ((1.-kappa)*phi_tilda*phi_tilda + kappa)
-                    *scalar_product(stress_tensor_plus, eps_u[i])
-                  + scalar_product(stress_tensor_minus, eps_u[i]);
+            ((1.-kappa)*phi_tilda*phi_tilda + kappa) *
+            scalar_product(stress_tensor_plus, eps_u[i])
+            // scalar_product(stress_tensor_plus, grad_xi_u[i])
+            +
+						scalar_product(stress_tensor_minus, eps_u[i])
+            // scalar_product(stress_tensor_minus, grad_xi_u[i])
+						;
 				  if (include_pressure)
 						rhs_u +=
-							-(data.biot_coef-1.0)*phi_tilda*phi_tilda*pressure_values[q]*
-							// trace(grad_xi_u[i]);
-							(grad_xi_u[i][0][0] + grad_xi_u[i][1][1]);
+							-
+							(data.biot_coef-1.0)*phi_tilda*phi_tilda*
+							p_values[q]*trace(grad_xi_u[i])
+							+
+							phi_tilda*phi_tilda*scalar_product(grad_p_values[q], xi_u[i])
+							;
+							// (grad_xi_u[i][0][0] + grad_xi_u[i][1][1]);
 
           double rhs_phi =
-                  (1.-kappa)*phi_value*xi_phi[i]
-                  *scalar_product(stress_tensor_plus, strain_tensor_value)
-                  - G_c/e*(1.-phi_value)*xi_phi[i]
-                  + G_c*e
-                    *scalar_product(grad_phi_values[q], grad_xi_phi[i]);
+            (1.-kappa)*phi_values[q] *
+            scalar_product(stress_tensor_plus, strain_tensor_value)*xi_phi[i]
+            -
+						G_c/e*(1.-phi_values[q])*xi_phi[i]
+            +
+						G_c*e*scalar_product(grad_phi_values[q], grad_xi_phi[i])
+						;
 				  if (include_pressure)
 					{
 						// pcout << "Include pressure " << std::endl;
+						// pcout << std::endl;
+						// pcout << "first " << trace(grad_u_values[q]) << std::endl;
+						// pcout << "second "
+						// 			<< (grad_u_values[q][0][0] + grad_u_values[q][1][1])
+						// 			<< std::endl;
 						rhs_phi +=
-							-2.0*(data.biot_coef-1.0)*phi_value*pressure_values[q] *
-							// trace(grad_u_values[q])*xi_phi[i];
-							(grad_u_values[q][0][0] + grad_u_values[q][1][1])*xi_phi[i];
+							-
+							2.0*(data.biot_coef-1.0)*phi_values[q]*p_values[q] *
+							trace(grad_u_values[q])*xi_phi[i]
+							+
+							2.0*phi_values[q]*
+							scalar_product(grad_p_values[q], u_values[q])*xi_phi[i]
+							;
 					}
 
           local_rhs[i] -= (rhs_u + rhs_phi)*jxw;
@@ -601,43 +623,53 @@ assemble_coupled_system(const TrilinosWrappers::MPI::BlockVector &linerarization
             for (unsigned int j=0; j<dofs_per_cell; ++j)
             {
               double m_u_u =
-                  ((1.-kappa)*phi_tilda*phi_tilda + kappa)
-                   *scalar_product(sigma_u_plus[j], eps_u[i])
-                  + scalar_product(sigma_u_minus[j], eps_u[i]);
+                ((1.-kappa)*phi_tilda*phi_tilda + kappa) *
+                scalar_product(sigma_u_plus[j], eps_u[i])
+                // scalar_product(sigma_u_plus[j], grad_xi_u[i])
+                +
+								scalar_product(sigma_u_minus[j], eps_u[i])
+                // scalar_product(sigma_u_minus[j], grad_xi_u[i])
+								;
 
-              // old (from paper) - probably wrong
-              // double m_phi_u =
-              //         2.*(1.-kappa)*phi_value
-              //         *scalar_product(sigma_u_plus[j], strain_tensor_value)
-              //         *xi_phi[i];
-
-              // new
               double m_phi_u =
-                      (1.-kappa)*phi_value*
-                        (  scalar_product(sigma_u_plus[j], strain_tensor_value)
-                         + scalar_product(stress_tensor_plus, eps_u[j]))
-                        *xi_phi[i];
+                (1.-kappa)*phi_values[q]*
+                  (scalar_product(sigma_u_plus[j], strain_tensor_value) +
+                   scalar_product(stress_tensor_plus, eps_u[j]))*
+                xi_phi[i]
+								;
 							if (include_pressure)
 								{
 									// pcout << "INcluding pressure" << std::endl;
 									m_phi_u +=
-										-2.0*(data.biot_coef-1.0)*pressure_values[q]*
-										// phi_value*trace(grad_xi_u[j])*xi_phi[i];
-										phi_value*(grad_xi_u[j][0][0] + grad_xi_u[j][1][1])*xi_phi[i];
+										-
+										2.0*(data.biot_coef-1.0)*p_values[q]*phi_values[q]*
+										trace(grad_xi_u[j])*xi_phi[i]
+										+
+										2.0*phi_values[q]*scalar_product(grad_p_values[q], xi_u[j])*
+										xi_phi[i]
+										;
 								}
 
               // double m_u_phi = 0;
 
               double m_phi_phi =
-                (1.-kappa)*xi_phi[j]*xi_phi[i]
-                  *scalar_product(stress_tensor_plus, strain_tensor_value)
-                + G_c/e*(xi_phi[j]*xi_phi[i])
-                + G_c*e*scalar_product(grad_xi_phi[j], grad_xi_phi[i]);
+                (1.-kappa) *
+                scalar_product(stress_tensor_plus, strain_tensor_value)*
+								xi_phi[j]*xi_phi[i]
+                +
+								G_c/e*(xi_phi[j]*xi_phi[i])
+                +
+								G_c*e*scalar_product(grad_xi_phi[j], grad_xi_phi[i]);
+
 							if (include_pressure)
 								m_phi_phi +=
-									-2.0*(data.biot_coef-1.0)*pressure_values[q]*
-									// trace(grad_u_values[q])*xi_phi[j]*xi_phi[i];
-									(grad_u_values[q][0][0] + grad_u_values[q][1][1])*xi_phi[j]*xi_phi[i];
+									-
+									2.0*(data.biot_coef-1.0)*p_values[q]*
+									trace(grad_u_values[q])*xi_phi[j]*xi_phi[i]
+									+
+									2.0*scalar_product(grad_p_values[q], u_values[q])*
+									xi_phi[j]*xi_phi[i]
+									;
 
               local_matrix(i, j) += (m_u_u + m_phi_u + m_phi_phi) * jxw;
 
@@ -879,7 +911,6 @@ PhaseFieldSolver<dim>::
 solve_coupled_newton_step(const TrilinosWrappers::MPI::BlockVector &pressure_solution,
 													const std::pair<double,double> 		 			 &time_steps)
 {
-  // assemble_system(solution, time_steps, true);
 	assemble_coupled_system(solution, pressure_solution, time_steps,
 												  /*include_pressure = */ true,
 												 	/*assemble_matrix  = */ true);
@@ -915,8 +946,8 @@ solve_coupled_newton_step(const TrilinosWrappers::MPI::BlockVector &pressure_sol
     }
   } // end line search
 
-	std::pair<unsigned int, unsigned int> solver_results =
-		std::make_pair(n_gmres, n_steps);
+	std::pair<unsigned int, unsigned int>
+		solver_results = std::make_pair(n_gmres, n_steps);
 	return solver_results;
 }    // eom
 

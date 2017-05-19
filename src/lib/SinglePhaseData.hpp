@@ -101,7 +101,7 @@ namespace InputData
       this->prm.declare_entry("Young modulus", "1", Patterns::Double());
       this->prm.declare_entry("Poisson ratio", "0.3", Patterns::Double(0, 0.5));
 			this->prm.declare_entry("Biot coefficient", "0.8",
-															Patterns::Double(1e-3, 1.0-1e-3));
+															Patterns::Double(0, 1));
       this->prm.declare_entry("Fracture toughness", "1", Patterns::Double());
 
 			// parameters for fluid problem

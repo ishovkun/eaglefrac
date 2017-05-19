@@ -9,17 +9,17 @@ end
 
 subsection Initial conditions
   #              x1,  y1,  x2,  y2
-  set Defects = (0.4, 0.5, 0.6, 0.5)
+  set Defects = (1.8, 2,   2.2, 2)
 end
 
 subsection Equation data
-  set Pressure                   = 1e3*time
+  set Pressure                   = 1e-3
   set Fracture toughness         = 1
-  set Young modulus              = 210000
-  set Poisson ratio              = 0.3
+  set Young modulus              = 1
+  set Poisson ratio              = 0.2
   set Biot coefficient           = 0.0
   set Regularization epsilon     = 5, 1
-  set Regularization kappa       = 1e-10
+  set Regularization kappa       = 1e-12
   set Penalization c             = 1e3
   set Uniform Poisson ratio      = true
   set Uniform Young modulus      = true
@@ -30,26 +30,28 @@ end
 
 
 subsection Mesh
-  set Initial global refinement steps = 3
-  set Local refinement steps          = 2
-  set Local refinement region         = 0.38, 0.48, 0.62, 0.52
-  set Adaptive steps                  = 2  
-  set Adaptive phi value              = 0.6
-  set Mesh file                       = input/unit_square.msh
+  set Initial global refinement steps = 4
+  set Local refinement steps          = 8
+  set Local refinement region         = 1.7, 2.3, 1.98, 2.02
+  set Adaptive steps                  = 0
+  set Adaptive phi value              = 0.9
+  set Mesh file                       = input/4x4.msh
 end
 
 
 subsection Solver
   set Time stepping table = (0, 1e-2);
-  set Max Newton steps  = 20
+  set Max Newton steps  = 100
   set Minimum time step = 1e-9
-  set Newton tolerance  = 1e-9
-  set T max             = 10
+  set Newton tolerance  = 1e-7
+  set T max             = 1e-2
 end
 
 subsection Postprocessing
-  set Functions = 
-  set Arguments = 
+  set Functions = COD
+  #                coord_start, coord_end, n_point,  direction
+  # n_points should be 2n+1, and start/end points should be in nodes
+  set Arguments = (1.5,          2.5,      33,       1)
 end
 
 

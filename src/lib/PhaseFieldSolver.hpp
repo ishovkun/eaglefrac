@@ -157,6 +157,7 @@ TrilinosWrappers::MPI::BlockVector owned_storage_vector;
 TrilinosWrappers::MPI::BlockVector rhs_vector;
 ConstraintMatrix physical_constraints, all_constraints, hanging_nodes_constraints;
 bool use_old_time_step_phi;
+int  decompose_stress;
 
 };
 
@@ -177,7 +178,8 @@ PhaseFieldSolver<dim>::PhaseFieldSolver
     computing_timer(computing_timer_),
     fe(FE_Q<dim>(1), dim, // displacement components
        FE_Q<dim>(1), 1), // phase-field
-    use_old_time_step_phi(false)
+    use_old_time_step_phi(false),
+		decompose_stress(2)
 {}     // EOM
 
 
@@ -367,6 +369,8 @@ assemble_coupled_system(const TrilinosWrappers::MPI::BlockVector &linerarization
                 				const bool 															 include_pressure,
                 				const bool 															 assemble_matrix)
 {
+	AssertThrow(decompose_stress >=0 && decompose_stress < 3,
+	            ExcMessage("decompose_stress argument is wrong"));
 	if (include_pressure)
 		AssertThrow(p_pressure_dof_handler != NULL,
 		            ExcMessage("pointer to pressure dof_handler is null"));
@@ -487,32 +491,40 @@ assemble_coupled_system(const TrilinosWrappers::MPI::BlockVector &linerarization
 			double nu = data.get_poisson_ratio->value(cell->center(), 0);
 			double lame_constant = E*nu/((1.+nu)*(1.-2*nu));
 			double shear_modulus = 0.5*E/(1.+nu);
+			// pcout << " biot_coef " << data.biot_coef << std::endl;
+			// pcout << " E " << E << std::endl;
+			// pcout << " nu " << nu << std::endl;
 
       for (unsigned int q=0; q<n_q_points; ++q)
       {
 				strain_tensor_value = 0.5*(grad_u_values[q] + transpose(grad_u_values[q]));
 
-        // Simple splitting
-        // stress_decomposition.get_stress_decomposition(strain_tensor_value,
-        //                                               lame_constant,
-        //                                               shear_modulus,
-        //                                               stress_tensor_plus,
-        //                                               stress_tensor_minus);
-
-        // Spectral decomposition
-        stress_decomposition.stress_spectral_decomposition(strain_tensor_value,
-                                                           lame_constant,
-                                                           shear_modulus,
-                                                           stress_tensor_plus,
-                                                           stress_tensor_minus);
+				if (decompose_stress == 0)  // no splitting
+				{
+					stress_decomposition.get_stress(strain_tensor_value, lame_constant,
+							 													  shear_modulus, stress_tensor_plus);
+					stress_tensor_minus = 0;
+				}
+				else if (decompose_stress == 1) // Simple splitting
+	        stress_decomposition.get_stress_decomposition(strain_tensor_value,
+	                                                      lame_constant,
+	                                                      shear_modulus,
+	                                                      stress_tensor_plus,
+	                                                      stress_tensor_minus);
+				else if (decompose_stress == 2) // Spectral decomposition
+	        stress_decomposition.stress_spectral_decomposition(strain_tensor_value,
+	                                                           lame_constant,
+	                                                           shear_modulus,
+	                                                           stress_tensor_plus,
+	                                                           stress_tensor_minus);
 
         // we get nans at the first time step
         if (!numbers::is_finite(trace(stress_tensor_plus)))
-          stress_decomposition.get_stress_decomposition(strain_tensor_value,
-                                                        lame_constant,
-                                                        shear_modulus,
-                                                        stress_tensor_plus,
-                                                        stress_tensor_minus);
+				{
+					stress_decomposition.get_stress(strain_tensor_value, lame_constant,
+							 													  shear_modulus, stress_tensor_plus);
+					stress_tensor_minus = 0;
+				}
 
         double old_phi_value = old_phi_values[q];
         double old_old_phi_value = old_old_phi_values[q];
@@ -538,35 +550,39 @@ assemble_coupled_system(const TrilinosWrappers::MPI::BlockVector &linerarization
 
           if (assemble_matrix)
           {
-            // No decomposition
-            // sigma_u_plus[k] =
-            //         lame_constant*trace(eps_u[k])*identity_tensor
-            //         + 2*shear_modulus*eps_u[k];
-            // sigma_u_minus[k] = 0;
+						if (decompose_stress == 0) // No decomposition
+						{
+							stress_decomposition.get_stress
+							(eps_u[k], lame_constant,
+							 shear_modulus, sigma_u_plus[k]);
+	            sigma_u_minus[k] = 0;
+						}
 
-            // Spectral decomposition
-            stress_decomposition.stress_spectral_decomposition_derivatives
-              (strain_tensor_value,
-               eps_u[k],
-               lame_constant,
-               shear_modulus,
-               sigma_u_plus[k],
-               sigma_u_minus[k]);
+						else if (decompose_stress == 1) // Simple splitting
+						{
+              stress_decomposition.get_stress_decomposition_derivatives
+                (strain_tensor_value, eps_u[k],
+                 lame_constant, shear_modulus,
+                 sigma_u_plus[k], sigma_u_minus[k]);
+						}
+						else if (decompose_stress == 2) // Spectral decomposition
+	            stress_decomposition.stress_spectral_decomposition_derivatives
+	              (strain_tensor_value, eps_u[k],
+	               lame_constant, shear_modulus,
+	               sigma_u_plus[k], sigma_u_minus[k]);
 
             // we get nans at the first time step
             // simple splitting
             if (!numbers::is_finite(trace(sigma_u_plus[k])))
-              stress_decomposition.get_stress_decomposition_derivatives
-                (strain_tensor_value,
-                 eps_u[k],
-                 lame_constant,
-                 shear_modulus,
-                 sigma_u_plus[k],
-                 sigma_u_minus[k]);
-          }
+						{
+							stress_decomposition.get_stress(eps_u[k], lame_constant,
+							 																shear_modulus, sigma_u_plus[k]);
+							sigma_u_minus[k] = 0;
+						}
+          }  // end if assemble matrix
         } // end k loop
 
-              // Assemble local rhs +
+        // Assemble local rhs +
         for (unsigned int i=0; i<dofs_per_cell; ++i)
         {
           double rhs_u =
@@ -585,24 +601,17 @@ assemble_coupled_system(const TrilinosWrappers::MPI::BlockVector &linerarization
 							+
 							phi_tilda*phi_tilda*scalar_product(grad_p_values[q], xi_u[i])
 							;
-							// (grad_xi_u[i][0][0] + grad_xi_u[i][1][1]);
 
           double rhs_phi =
-            (1.-kappa)*phi_values[q] *
+            (1.0-kappa)*phi_values[q] *
             scalar_product(stress_tensor_plus, strain_tensor_value)*xi_phi[i]
             -
-						G_c/e*(1.-phi_values[q])*xi_phi[i]
+						G_c/e*(1.0-phi_values[q])*xi_phi[i]
             +
 						G_c*e*scalar_product(grad_phi_values[q], grad_xi_phi[i])
 						;
 				  if (include_pressure)
 					{
-						// pcout << "Include pressure " << std::endl;
-						// pcout << std::endl;
-						// pcout << "first " << trace(grad_u_values[q]) << std::endl;
-						// pcout << "second "
-						// 			<< (grad_u_values[q][0][0] + grad_u_values[q][1][1])
-						// 			<< std::endl;
 						rhs_phi +=
 							-
 							2.0*(data.biot_coef-1.0)*phi_values[q]*p_values[q] *
@@ -639,7 +648,6 @@ assemble_coupled_system(const TrilinosWrappers::MPI::BlockVector &linerarization
 								;
 							if (include_pressure)
 								{
-									// pcout << "INcluding pressure" << std::endl;
 									m_phi_u +=
 										-
 										2.0*(data.biot_coef-1.0)*p_values[q]*phi_values[q]*

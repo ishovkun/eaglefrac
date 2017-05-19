@@ -226,7 +226,11 @@ namespace EagleFrac
         if (boost::filesystem::create_directory(output_directory_path))
            std::cout << "Success" << std::endl;
       }
-    }
+
+			// create directory for vtu's
+			boost::filesystem::path vtu_path("./" + case_name + "/vtu");
+			boost::filesystem::create_directory(vtu_path);
+    }  // end mpi==0
   }  // eom
 
 
@@ -283,8 +287,8 @@ namespace EagleFrac
     double minimum_mesh_size = Mesher::compute_minimum_mesh_size(triangulation,
                                                                  mpi_communicator);
     const int max_refinement_level =
-        data.n_prerefinement_steps
       + data.initial_refinement_level
+      // +  data.n_prerefinement_steps
       + data.n_adaptive_steps;
 
     minimum_mesh_size /= std::pow(2, max_refinement_level);
@@ -299,7 +303,8 @@ namespace EagleFrac
     triangulation.refine_global(data.initial_refinement_level);
 		setup_dofs();
 
-		for (int ref_step=0; ref_step<data.n_prerefinement_steps; ++ref_step)
+		// for (int ref_step=0; ref_step<data.n_prerefinement_steps; ++ref_step)
+		for (int ref_step=0; ref_step<data.n_adaptive_steps; ++ref_step)
 		{
 			pcout << "Local_prerefinement" << std::endl;
 	    Mesher::refine_region(triangulation,
@@ -678,7 +683,7 @@ namespace EagleFrac
 
 
   template <int dim>
-  void SinglePhaseModel<dim>::output_results(int time_step_number, double time) // const
+  void SinglePhaseModel<dim>::output_results(int time_step_number, double time)
   {
     // Add data vectors to output
     std::vector<std::string> solution_names(dim, "displacement");
@@ -716,7 +721,7 @@ namespace EagleFrac
         n_processor_digits = 3;
 
     // Write output from local processors
-    const std::string filename = ("./" + case_name + "/solution-" +
+    const std::string filename = ("./" + case_name + "/vtu/solution-" +
                                   Utilities::int_to_string(time_step_number,
                                                            n_time_step_digits) +
                                   "." +
@@ -745,13 +750,13 @@ namespace EagleFrac
           Utilities::int_to_string(time_step_number, n_time_step_digits) +
           ".pvtu";
         std::ofstream
-          master_output(("./" + case_name + "/" + pvtu_filename).c_str());
+          master_output(("./" + case_name + "/vtu/" + pvtu_filename).c_str());
         data_out.write_pvtu_record(master_output, filenames);
 
 				// write pvd file
 				const std::string pvd_filename = "solution.pvd";
 				times_and_names.push_back
-					(std::pair<double,std::string> (time, pvtu_filename) );
+					(std::pair<double,std::string> (time, "./vtu/" + pvtu_filename) );
 				std::ofstream pvd_master(("./" + case_name + "/" + pvd_filename).c_str());
 				data_out.write_pvd_record(pvd_master, times_and_names);
       }  // end master output

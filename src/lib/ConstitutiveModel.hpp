@@ -240,6 +240,10 @@ namespace ConstitutiveModel {
                                                    const double        shear_modulus,
                                                    Tensor<2,dim>       &sigma_u_plus_i,
                                                    Tensor<2,dim>       &sigma_u_minus_i);
+		void get_stress(const Tensor<2,dim> &strain_tensor,
+                    const double        lame_constant,
+                    const double        shear_modulus,
+                    Tensor<2,dim>       &stress_tensor);
 
   private:
     Tensor<2,dim> p_matrix, p_matrix_du;
@@ -376,5 +380,17 @@ stress_spectral_decomposition_derivatives(const Tensor<2,dim> &eps,
 
 }  // EOM
 
+
+template <int dim>
+void EnergySpectralDecomposition<dim>::
+get_stress(const Tensor<2,dim> &strain_tensor,
+           const double        lame_constant,
+           const double        shear_modulus,
+           Tensor<2,dim>       &stress_tensor)
+{
+	stress_tensor =
+      lame_constant*trace(strain_tensor)*identity_tensor +
+      2*shear_modulus*strain_tensor;
+} // eom
 
 }  // end of namespace

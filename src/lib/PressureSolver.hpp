@@ -240,6 +240,7 @@ namespace FluidSolvers
 					(1.0-data.biot_coef)/bulk_modulus
 					+
 					data.porosity*data.fluid_compressibility;
+				// pcout << "recM " << recM << std::endl;
 
 				/* optimal FSS comvergence coefficient
 				ref: Convergence of iterative coupling for coupledflow and geomechanics

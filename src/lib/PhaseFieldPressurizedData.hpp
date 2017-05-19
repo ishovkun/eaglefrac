@@ -1,4 +1,5 @@
 #pragma once
+#include <deal.II/base/function_parser.h>
 
 #include <InputData.hpp>
 
@@ -22,6 +23,9 @@ namespace InputData
 	public:
 		std::vector<std::vector<double> > defect_coordinates;
 		std::vector<double> 							displacement_boundary_values;
+
+		// depends only on time and constants
+		FunctionParser<1>               pressure_function;
 	};
 
 
@@ -29,7 +33,8 @@ namespace InputData
 	PhaseFieldPressurizedData<dim>::
 	PhaseFieldPressurizedData(ConditionalOStream &pcout_)
 	:
-	PhaseFieldSolidData<dim>(pcout_)
+	PhaseFieldSolidData<dim>(pcout_),
+	pressure_function(1)
 	{
 		declare_parameters();
 	}  // eom
@@ -58,15 +63,6 @@ namespace InputData
                     Patterns::List(Patterns::Integer(0, dim-1)));
       this->prm.declare_entry("Displacement boundary values", "",
                       Patterns::List(Patterns::Double()));
-      // this->prm.declare_entry("Displacement boundary velocities", "",
-      //                 Patterns::List(Patterns::Double()));
-      // this->prm.declare_entry("Displacement points", "", Patterns::Anything());
-      // this->prm.declare_entry("Displacement point components", "",
-      //               Patterns::List(Patterns::Integer(0, dim-1)));
-      // this->prm.declare_entry("Displacement point velocities", "",
-      //               Patterns::List(Patterns::Double()));
-      // this->prm.declare_entry("Constraint point phase field", "",
-      //                   Patterns::List(Patterns::Bool()));
       this->prm.leave_subsection();
     }
 		{ // IC's
@@ -77,10 +73,11 @@ namespace InputData
     { // equation data
       this->prm.enter_subsection("Equation data");
       // Constant parameters
+      this->prm.declare_entry("Pressure", "0", Patterns::Anything());
       this->prm.declare_entry("Young modulus", "1", Patterns::Double());
       this->prm.declare_entry("Poisson ratio", "0.3", Patterns::Double(0, 0.5));
-			this->prm.declare_entry("Biot coefficient", "0.8",
-															Patterns::Double(1e-3, 1.-1e-3));
+			this->prm.declare_entry("Biot coefficient", "0.0",
+															Patterns::Double(0.0, 1.0));
       this->prm.declare_entry("Fracture toughness", "1e10", Patterns::Double());
       this->prm.declare_entry("Regularization kappa", "0", Patterns::Double());
       this->prm.declare_entry("Regularization epsilon", "2, 1",
@@ -191,6 +188,19 @@ namespace InputData
 		}
 	  {  // Equation data
 	    this->prm.enter_subsection("Equation data");
+			// Pressure expression
+			std::string pressure_string = this->prm.get("Pressure");
+			std::string variables_for_pressure = "time";
+			std::map<std::string, double> constants_for_pressure;
+			pressure_function.initialize(variables_for_pressure,
+																	 pressure_string,
+																	 constants_for_pressure);
+      // std::cout << "Pressure string "
+			//           << pressure_string
+			// 					<< std::endl;
+      // std::cout << "Pressure "
+			//           << pressure_function.value(Point<1>(0.0))
+			// 					<< std::endl;
 	    // Uniformity boolean
 	    this->uniform_fracture_toughness = this->prm.get_bool("Uniform fracture toughness");
 	    this->uniform_young_modulus = this->prm.get_bool("Uniform Young modulus");
@@ -272,8 +282,9 @@ namespace InputData
 	      std::vector<std::string> string_vector;
 	      std::vector< boost::variant<int, double, std::string> > args;
 	      boost::split(string_vector, tmp[i], boost::is_any_of(","));
-
 	      unsigned int l = this->postprocessing_function_names[i].size();
+
+				// boundary load arguments
 	      if (this->postprocessing_function_names[i].compare(0, l, "boundary_load") == 0)
 	      { // this function takes only a list of integers
 	        for (const auto &arg : string_vector)
@@ -283,7 +294,42 @@ namespace InputData
 	          convert >> item;
 	          args.push_back(item);
 	        }
-	      }
+	      }  // end boundary load
+
+				// crack opening displacements arguments
+	      if (this->postprocessing_function_names[i].compare(0, l, "COD") == 0)
+				{ // double coord_start, double coord_end, int n_lines, int direction<dim
+					AssertThrow(string_vector.size() == 4,
+				              ExcMessage("Number of arguments in COD is wrong"));
+					{ // convert first argument to double
+	          std::stringstream convert(string_vector[0]);
+	          double double_item;
+	          convert >> double_item;
+	          args.push_back(double_item);
+					}
+					{ // convert second argument to double
+	          std::stringstream convert(string_vector[1]);
+	          double double_item;
+	          convert >> double_item;
+	          args.push_back(double_item);
+					}
+					{ // convert third argument to int
+	          std::stringstream convert(string_vector[2]);
+	          int int_item;
+	          convert >> int_item;
+	          args.push_back(int_item);
+					}
+					{ // convert fourth argument to int
+	          std::stringstream convert(string_vector[3]);
+	          int int_item;
+	          convert >> int_item;
+						AssertThrow(int_item < dim,
+						            ExcMessage("COD direction parameter should be < dim"));
+	          args.push_back(int_item);
+						// std::stringstream convert
+					}
+				}
+
 	      this->postprocessing_function_args.push_back(args);
 	    }
 

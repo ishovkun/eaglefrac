@@ -38,9 +38,10 @@ namespace EagleFrac
     void read_mesh();
     void setup_dofs();
     void impose_displacement_on_solution(double time);
-    void output_results(int time_step_number); //const;
+    void output_results(int time_step_number, double time);
     void refine_mesh();
-    void execute_postprocessing(const double time);
+    void execute_postprocessing(const unsigned int time_step_number,
+																const double time);
     void exectute_adaptive_refinement();
     void prepare_output_directories();
 		void print_header();
@@ -64,8 +65,8 @@ namespace EagleFrac
 
 		TrilinosWrappers::MPI::BlockVector pressure_owned_solution;
 		TrilinosWrappers::MPI::BlockVector pressure_relevant_solution;
-		TrilinosWrappers::MPI::BlockVector fracture_toughness_owned;
-		TrilinosWrappers::MPI::BlockVector fracture_toughness_relevant;
+
+		std::vector< std::pair<double,std::string> > times_and_names;
   };
 
 
@@ -197,7 +198,11 @@ namespace EagleFrac
         if (boost::filesystem::create_directory(output_directory_path))
            std::cout << "Success" << std::endl;
       }
-    }
+
+			// create directory for vtu's
+			boost::filesystem::path vtu_path("./" + case_name + "/vtu");
+			boost::filesystem::create_directory(vtu_path);
+    } // end mpi==0
   }  // eom
 
 
@@ -225,8 +230,6 @@ namespace EagleFrac
 																			mpi_communicator);
 		pressure_owned_solution.reinit(owned_partitioning,
 																	 mpi_communicator);
-		fracture_toughness_owned.reinit(owned_partitioning, mpi_communicator);
-		fracture_toughness_relevant.reinit(relevant_partitioning, mpi_communicator);
 
   	computing_timer.exit_section();
 	} // eom
@@ -356,46 +359,6 @@ namespace EagleFrac
 		// phase_field_solver.dof_handler
 	}  // eom
 
-	template <int dim>
-  void PDSSolid<dim>::compute_Gc_vector()
-	{
-  	// const FEValuesExtractors::Scalar pressure(0);
-  	// const FEValuesExtractors::Scalar phase_field(dim);
-
-  	const QGauss<dim> quadrature_formula(2);
-	  // FEValues<dim> phi_fe_values(phase_field_solver.fe,
-		// 														quadrature_formula,
-	  //                         		update_values);
-
-    const unsigned int dofs_per_cell = pressure_fe.dofs_per_cell;
-
-  	std::vector<types::global_dof_index> local_dof_indices(dofs_per_cell);
-		// std::vector<double> phi_values(n_q_points);
-		// Vector<double>      local_pressure_vector(dofs_per_cell);
-
-		// phase_field_solver.relevant_solution = phase_field_solver.solution;
-
-	  typename DoFHandler<dim>::active_cell_iterator
-		  pressure_cell = pressure_dof_handler.begin_active(),
-		  endc = pressure_dof_handler.end();
-
-  	for (; pressure_cell!=endc; ++pressure_cell)
-    	if (pressure_cell->is_locally_owned())
-			{
-      	double G_c = data.get_fracture_toughness->value(pressure_cell->center(), 0);
-
-				pressure_cell->get_dof_indices(local_dof_indices);
-
-				for (unsigned int i=0; i<dofs_per_cell; ++i)
-					fracture_toughness_owned(local_dof_indices[i]) = G_c;
-			}
-
-		fracture_toughness_owned.compress(VectorOperation::insert);
-
-		// phase_field_solver.dof_handler
-	}  // eom
-
-
   template <int dim>
   void PDSSolid<dim>::run()
   {
@@ -420,6 +383,7 @@ namespace EagleFrac
 
     // local prerefinement
     triangulation.refine_global(data.initial_refinement_level);
+		setup_dofs();
 		for (int ref_step=0; ref_step<data.n_prerefinement_steps; ++ref_step)
 		{
 			pcout << "Local_prerefinement" << std::endl;
@@ -431,6 +395,7 @@ namespace EagleFrac
 
 		// point phase_field_solver to pressure objects
   	const FEValuesExtractors::Scalar pressure_extractor(0);
+		phase_field_solver.decompose_stress = 1;
 		phase_field_solver.set_coupling(pressure_dof_handler,
 																	  pressure_fe,
 																		pressure_extractor);
@@ -440,7 +405,8 @@ namespace EagleFrac
 			(phase_field_solver.dof_handler,
 			 InitialValues::Defects<dim>(data.defect_coordinates,
 																	  // idk why e/2, it just works better
-																	 data.regularization_parameter_epsilon/2),
+																	//  data.regularization_parameter_epsilon/2),
+																	 data.regularization_parameter_epsilon),
 			 phase_field_solver.solution);
 
     // phase_field_solver.solution.block(1) = 1;
@@ -468,9 +434,8 @@ namespace EagleFrac
 						<< time_step
             << std::endl;
 
-			double pressure_max_value = (time_step_number > 1) ? 1e3*time: 0.0;
-			pressure_owned_solution = pressure_max_value;
-			// impose_pressure_values(pressure_max_value);
+			double pressure_value = data.pressure_function.value(Point<1>(time));
+			pressure_owned_solution = pressure_value;
 			pressure_relevant_solution = pressure_owned_solution;
 
       impose_displacement_on_solution(time);
@@ -567,8 +532,8 @@ namespace EagleFrac
         }
 
       phase_field_solver.truncate_phase_field();
-      output_results(time_step_number);
-      execute_postprocessing(time);
+      output_results(time_step_number, time);
+      execute_postprocessing(time_step_number, time);
       // return;
 
       // phase_field_solver.use_old_time_step_phi = false;
@@ -586,7 +551,8 @@ namespace EagleFrac
 
 
   template <int dim>
-  void PDSSolid<dim>::execute_postprocessing(const double time)
+  void PDSSolid<dim>::execute_postprocessing(const unsigned int time_step_number,
+																						 const double time)
   {
     // just some commands so no compiler warnings
     for (unsigned int i=0; i<data.postprocessing_function_names.size(); i++)
@@ -613,13 +579,41 @@ namespace EagleFrac
              << std::endl;
         }
       }  // end boundary load
+      else if
+				(data.postprocessing_function_names[i].compare(0, l, "COD") == 0)
+			{
+				const double start =
+					boost::get<double>(data.postprocessing_function_args[i][0]);
+				const double end =
+					boost::get<double>(data.postprocessing_function_args[i][1]);
+				const unsigned int n_lines =
+					boost::get<int>(data.postprocessing_function_args[i][2]);
+				const unsigned int direction =
+					boost::get<int>(data.postprocessing_function_args[i][3]);
+				std::vector<double> lines(n_lines);
+				for (unsigned int k=0; k<n_lines; ++k)
+					lines[k] = start + (end-start)/(n_lines-1)*k;
 
+				Vector<double> cod_values = Postprocessing::compute_cod
+					(phase_field_solver, lines, mpi_communicator, direction);
+
+        if (Utilities::MPI::this_mpi_process(mpi_communicator) == 0)
+        {
+          std::ofstream ff;
+          ff.open("./" + case_name + "/cod-" +
+                  Utilities::int_to_string(time_step_number, 1) +
+                  ".txt",
+                  std::ios_base::app);
+					for (unsigned int k=0; k<n_lines; ++k)
+						ff << lines[k] << "\t" << cod_values[k] << std::endl;
+        }  // end process==0
+			}  // end COD function
     }  // end loop over postprocessing functions
   }  // eom
 
 
   template <int dim>
-  void PDSSolid<dim>::output_results(int time_step_number) // const
+  void PDSSolid<dim>::output_results(int time_step_number, double time)
   {
     // Add data vectors to output
     std::vector<std::string> solution_names(dim, "displacement");
@@ -650,17 +644,17 @@ namespace EagleFrac
 														 pressure_relevant_solution,
 														 "pressure");
     // toughness
-		fracture_toughness_relevant = fracture_toughness_owned;
-		data_out.add_data_vector(pressure_dof_handler,
-														 fracture_toughness_relevant,
-														 "G_c");
+		// fracture_toughness_relevant = fracture_toughness_owned;
+		// data_out.add_data_vector(pressure_dof_handler,
+		// 												 fracture_toughness_relevant,
+		// 												 "G_c");
     data_out.build_patches();
 
     int n_time_step_digits = 3,
         n_processor_digits = 3;
 
     // Write output from local processors
-    const std::string filename = ("./" + case_name + "/solution-" +
+    const std::string filename = ("./" + case_name + "/vtu/solution-" +
                                   Utilities::int_to_string(time_step_number,
                                                            n_time_step_digits) +
                                   "." +
@@ -672,24 +666,33 @@ namespace EagleFrac
 
     // Write master file
     if (Utilities::MPI::this_mpi_process(mpi_communicator) == 0)
-      {
-        std::vector<std::string> filenames;
-        for (unsigned int i=0;
-             i<Utilities::MPI::n_mpi_processes(mpi_communicator);
-             ++i)
-          filenames.push_back("solution-" +
-                              Utilities::int_to_string(time_step_number,
-                                                       n_time_step_digits) +
-                              "." +
-                              Utilities::int_to_string (i,
-                                                        n_processor_digits) +
-                              ".vtu");
-        std::ofstream
-          master_output(("./" + case_name + "/solution-" +
-                         Utilities::int_to_string(time_step_number, n_time_step_digits) +
-                         ".pvtu").c_str());
-        data_out.write_pvtu_record(master_output, filenames);
-      }  // end master output
+    {
+      std::vector<std::string> filenames;
+      for (unsigned int i=0;
+           i<Utilities::MPI::n_mpi_processes(mpi_communicator);
+           ++i)
+        filenames.push_back("solution-" +
+                            Utilities::int_to_string(time_step_number,
+                                                     n_time_step_digits) +
+                            "." +
+                            Utilities::int_to_string (i,
+                                                      n_processor_digits) +
+                            ".vtu");
+      std::string pvtu_filename =
+			  "solution-" +
+        Utilities::int_to_string(time_step_number, n_time_step_digits) +
+        ".pvtu";
+      std::ofstream
+        master_output(("./" + case_name + "/vtu/" + pvtu_filename).c_str());
+      data_out.write_pvtu_record(master_output, filenames);
+
+			// write pvd file
+			const std::string pvd_filename = "solution.pvd";
+			times_and_names.push_back
+				(std::pair<double,std::string> (time, "./vtu/" + pvtu_filename) );
+			std::ofstream pvd_master(("./" + case_name + "/" + pvd_filename).c_str());
+			data_out.write_pvd_record(pvd_master, times_and_names);
+    }  // end master output
   } // EOM
 }  // end of namespace
 

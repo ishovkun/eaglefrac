@@ -14,6 +14,7 @@ ADD_LIBRARY(lib
   PressureSolver.hpp
   SinglePhaseData.hpp
   Well.hpp
+  Scheduler.hpp
 )
 
 DEAL_II_SETUP_TARGET(lib)

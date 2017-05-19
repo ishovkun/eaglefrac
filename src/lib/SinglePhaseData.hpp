@@ -2,11 +2,11 @@
 
 #include <InputData.hpp>
 #include <Well.hpp>
+#include <Scheduler.hpp>
 
 namespace InputData
 {
 	using namespace dealii;
-
 
 	template <int dim>
 	class SinglePhaseData : public PhaseFieldSolidData<dim>
@@ -15,6 +15,7 @@ namespace InputData
 		SinglePhaseData(ConditionalOStream &pcout_);
 		~SinglePhaseData();
     void read_input_file(std::string);
+		void update_well_controlls(const double time);
 	private:
 		void assign_parameters();
 		void declare_parameters();
@@ -29,6 +30,7 @@ namespace InputData
 																			fracture_compressibility;
 
     std::vector< RHS::Well<dim>*> wells;  // needs to be deleted in the end
+		RHS::Scheduler<dim>           schedule;
 	};
 
 
@@ -63,7 +65,7 @@ namespace InputData
       this->prm.enter_subsection("Mesh");
       this->prm.declare_entry("Mesh file", "", Patterns::Anything());
       this->prm.declare_entry("Initial global refinement steps", "0", Patterns::Integer(0, 100));
-      this->prm.declare_entry("Local refinement steps", "0", Patterns::Integer(0, 100));
+      // this->prm.declare_entry("Local refinement steps", "0", Patterns::Integer(0, 100));
       this->prm.declare_entry("Adaptive steps", "0", Patterns::Integer(0, 100));
       this->prm.declare_entry("Adaptive phi value", "0", Patterns::Double(0, 1));
       this->prm.declare_entry("Local refinement region", "",
@@ -78,15 +80,10 @@ namespace InputData
                     Patterns::List(Patterns::Integer(0, dim-1)));
       this->prm.declare_entry("Displacement boundary values", "",
                       Patterns::List(Patterns::Double()));
-      // this->prm.declare_entry("Displacement boundary velocities", "",
+      // this->prm.declare_entry("Pressure boundary labels", "",
+      //               Patterns::List(Patterns::Integer()));
+      // this->prm.declare_entry("Pressure boundary values", "",
       //                 Patterns::List(Patterns::Double()));
-      // this->prm.declare_entry("Displacement points", "", Patterns::Anything());
-      // this->prm.declare_entry("Displacement point components", "",
-      //               Patterns::List(Patterns::Integer(0, dim-1)));
-      // this->prm.declare_entry("Displacement point velocities", "",
-      //               Patterns::List(Patterns::Double()));
-      // this->prm.declare_entry("Constraint point phase field", "",
-      //                   Patterns::List(Patterns::Bool()));
       this->prm.leave_subsection();
     }
 		{ // IC's
@@ -95,6 +92,13 @@ namespace InputData
       this->prm.declare_entry("Reservoir pressure", "0", Patterns::Double(0, 1e20));
       this->prm.leave_subsection();
 		}
+		{ // Wells
+			this->prm.enter_subsection("Wells");
+      this->prm.declare_entry("Location", "", Patterns::Anything());
+      this->prm.declare_entry("Schedule", "", Patterns::Anything());
+      this->prm.leave_subsection();
+		}
+
     { // equation data
       this->prm.enter_subsection("Equation data");
       // Constant parameters
@@ -176,7 +180,7 @@ namespace InputData
 	    this->prm.enter_subsection("Mesh");
 	    this->mesh_file_name = this->prm.get("Mesh file");
 	    this->initial_refinement_level = this->prm.get_integer("Initial global refinement steps");
-	    this->n_prerefinement_steps = this->prm.get_integer("Local refinement steps");
+	    // this->n_prerefinement_steps = this->prm.get_integer("Local refinement steps");
 	    this->n_adaptive_steps = this->prm.get_integer("Adaptive steps");
 	    this->phi_refinement_value = this->prm.get_double("Adaptive phi value");
 	    std::vector<double> tmp =
@@ -323,9 +327,7 @@ namespace InputData
 	      { // this function takes only a list of integers
 	        for (const auto &arg : string_vector)
 	        {
-	          std::stringstream convert(arg);
-	          int item;
-	          convert >> item;
+	          int item = convert<int>(arg);
 	          args.push_back(item);
 	        }
 	      }
@@ -335,6 +337,69 @@ namespace InputData
 	    this->prm.leave_subsection();
 	  }
 
+		{ // Wells
+			this->prm.enter_subsection("Wells");
+			// WELL LOCATION
+			std::vector<std::string> loc_stv =
+	        parse_pathentheses_list(this->prm.get("Location"));
+			// loop through wells
+	    for (unsigned int i=0; i<loc_stv.size(); i++)
+			{
+				// std::cout << loc_stv[i] << std::endl;
+				std::vector<std::string> item_stv =
+					parse_string_list<std::string>(loc_stv[i]);
+				AssertThrow(item_stv.size() == 2+dim, ExcMessage("Wrong entry in Location"));
+
+				std::string well_name = item_stv[0];
+				Point<dim> loc;
+				// loop well coordinates
+        for (int j=1; j<=dim; ++j)
+        {
+					double c = convert<double>(item_stv[j]);
+					loc[j-1] = c;
+				}
+				// well radius
+        double radius = convert<double>(item_stv[dim+1]);
+				this->wells.push_back(
+					new RHS::Well<dim>(loc, /*rate*/ 0, /*loc_radius*/ radius));
+
+				schedule.add_well(i, well_name);
+			}  // end loop through wells
+
+			// WELL SCHEDULE
+			std::vector<std::string> sch_stv =
+	        parse_pathentheses_list(this->prm.get("Schedule"));
+			for (unsigned int l=0; l<sch_stv.size(); l++)
+			{
+				// std::cout << sch_stv[l] << std::endl;
+				std::vector<std::string> items =
+					parse_string_list<std::string>(sch_stv[l]);
+				AssertThrow(items.size() == 4, ExcMessage("Wrong entry in Schedule"));
+
+				// format: time, name, control, value
+				double time = convert<double>(items[0]);
+				std::string wname = items[1];
+				unsigned int control = convert<unsigned int>(items[2]);
+				AssertThrow(control==0, ExcMessage("Only flow wells are implemented"));
+				double value = convert<double>(items[3]);
+				schedule.add_line(time, wname, control, value);
+			}
+
+      this->prm.leave_subsection();
+		}  // end Wells
 	}  // eom
 
+
+	template <int dim>
+	void SinglePhaseData<dim>::update_well_controlls(const double time)
+	{
+		const auto &controls = schedule.get_well_controls(time);
+		// std::cout << "cc "<< controls[0].value << std::endl;
+
+		AssertThrow(this->wells.size() == controls.size(),
+			ExcMessage("Something's wrong withg the schedule"));
+
+		for(unsigned int w=0; w<this->wells.size(); ++w)
+			this->wells[w]->set_control(controls[w]);
+	}  // eom
 }  // end of namespace

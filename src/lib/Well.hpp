@@ -4,6 +4,14 @@ namespace RHS
 {
 	using namespace dealii;
 
+	class WellControl
+	{
+	public:
+		// 0 - rate, 1 - pressure
+		unsigned int control_value;
+		double value;
+	};
+
 	template <int dim>
 	class Well : public Function<dim>
 	{
@@ -30,6 +38,8 @@ namespace RHS
 		// set_control(const double value, const int control);
 		void locate(const DoFHandler<dim>  &dof_handler,
 								MPI_Comm 				 &mpi_communicator);
+
+		void set_control(const WellControl &control);
 
 		private:
 			const Point<dim> &true_location;
@@ -156,4 +166,12 @@ namespace RHS
 			dst[p] = Well<dim>::value(points[p], 0);
   }  // eom
 
+
+	template <int dim> void
+	Well<dim>::set_control(const WellControl &control)
+	{
+		AssertThrow(control.control_value == 0,
+		            ExcMessage("BHP wells not implemented"));
+    this->flow_rate = control.value;
+	}
 }  // end of namespace

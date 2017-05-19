@@ -276,11 +276,6 @@ namespace EagleFrac
 																		pressure_fe,
 																		pressure_extractor);
 
-
-    // Point<dim> center(0.5, 0.5);
-    Point<dim> center(2, 2);
-		data.wells.push_back( new RHS::Well<dim>(center, 2e-1) );
-
     prepare_output_directories();
 
     // compute_runtime_parameters
@@ -288,7 +283,6 @@ namespace EagleFrac
                                                                  mpi_communicator);
     const int max_refinement_level =
       + data.initial_refinement_level
-      // +  data.n_prerefinement_steps
       + data.n_adaptive_steps;
 
     minimum_mesh_size /= std::pow(2, max_refinement_level);

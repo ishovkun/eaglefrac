@@ -57,6 +57,16 @@ namespace InputData {
   }
 
 
+	// convert string to a base type
+	template <typename T>
+	T convert(const std::string &str)
+	{
+    std::stringstream conv(str);
+		T result;
+		conv >> result;
+		return result;
+	}
+
   template <int dim>
   std::vector< Point<dim> > parse_point_list(const std::string &str)
   {
@@ -514,9 +524,10 @@ void PhaseFieldSolidData<dim>::assign_parameters()
       { // this function takes only a list of integers
         for (const auto &arg : string_vector)
         {
-          std::stringstream convert(arg);
-          int item;
-          convert >> item;
+          // std::stringstream convert(arg);
+          // int item;
+          // convert >> item;
+					int item = convert<int>(arg);
           args.push_back(item);
         }
       }

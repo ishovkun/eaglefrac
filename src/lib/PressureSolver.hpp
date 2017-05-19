@@ -287,12 +287,15 @@ namespace FluidSolvers
 					// interpolate pereability
 					double K_eff =
 						(data.perm_res + xi_f*(perm_f - data.perm_res))/data.fluid_viscosity;
-					K_eff = std::max(data.perm_res/data.fluid_viscosity, K_eff);
+					// K_eff = std::max(data.perm_res/data.fluid_viscosity, K_eff);
+					K_eff = std::max(1e-12, K_eff);
 
 					double source_term = 0;
 					for (unsigned int k=0; k<data.wells.size(); ++k)
 						source_term += data.wells[k]->value(quadrature_points[q], 0);
-					// pcout << "source " << source_term << std::endl;
+
+					// if (source_term > 0)
+					// 	pcout << "source " << source_term << std::endl;
 
 					// if (phi_values[q] > 0.1 && phi_values[q] < 0.5)
 					// {
@@ -342,7 +345,7 @@ namespace FluidSolvers
 							(recM + beta) *
 							old_p_values[q]/time_step*xi_p[i]
 							-
-							data.biot_coef*
+							data.biot_coef *
 							(div_u_values[q] - div_old_u_values[q])/time_step*xi_p[i]
 							// +
 							// K_eff*data.fluid_density*g_vector*grad_xi_p[i]

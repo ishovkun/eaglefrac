@@ -271,7 +271,6 @@ namespace InputData {
   template <int dim>
   void PhaseFieldSolidData<dim>::declare_parameters()
   {
-		// pcout << "Declaring shit 1" << std::endl;
     { // Mesh
       prm.enter_subsection("Mesh");
       prm.declare_entry("Mesh file", "", Patterns::Anything());

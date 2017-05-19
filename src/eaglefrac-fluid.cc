@@ -268,6 +268,10 @@ namespace EagleFrac
     data.read_input_file(input_file_name);
     read_mesh();
 
+		// data.update_well_controlls(0.0);
+		// pcout << "rate " << data.wells[0]->value(Point<dim>(2,2), 0) << std::endl;
+		// return;
+
 		auto & pressure_dof_handler = pressure_solver.get_dof_handler();
 		auto & pressure_fe = pressure_solver.get_fe();
 		// point phase_field_solver to pressure objects
@@ -319,7 +323,7 @@ namespace EagleFrac
 		 );
 
 		phase_field_solver.old_solution = phase_field_solver.solution;
-		pressure_solver.solution = 0;
+		pressure_solver.solution = data.init_pressure;
     // phase_field_solver.old_solution.block(1) = phase_field_solver.solution.block(1);
 
     double time = 0;
@@ -350,6 +354,11 @@ namespace EagleFrac
 			// return;
 
       impose_displacement_on_solution();
+			data.update_well_controlls(time);
+
+			// pcout << "Flow rate "
+			// 			<< data.wells[0]->value(Point<dim>(2,2), 0)
+			// 			<< std::endl;
 
       std::pair<double,double> time_steps = std::make_pair(time_step, old_time_step);
 
@@ -362,7 +371,7 @@ namespace EagleFrac
 
 			double fss_error = std::numeric_limits<double>::max();
 			unsigned int fss_step = 0;
-		  while (fss_step < 100)
+		  while (fss_step < 30)
 			{
 				pcout << "-----------------------------------------------" << std::endl;
 				pcout << "FSS iteration " << fss_step << std::endl;
@@ -406,9 +415,26 @@ namespace EagleFrac
 	          old_active_set = phase_field_solver.active_set;
 	        }  // end first newton step condition
 
-					std::pair<unsigned int, unsigned int> newton_step_results =
-						phase_field_solver.solve_coupled_newton_step
-							(pressure_solver.relevant_solution, time_steps);
+					std::pair<unsigned int, unsigned int> newton_step_results;
+					try
+					{
+						newton_step_results =
+							phase_field_solver.solve_coupled_newton_step
+								(pressure_solver.relevant_solution, time_steps);
+					}
+					catch (SolverControl::NoConvergence e)
+					{
+						pcout << "linear solver didn't converge!"
+						      << "Adjusting time step to " << time_step/10
+									<< std::endl;
+		        time -= time_step;
+		        time_step /= 10;
+		        time += time_step;
+		        phase_field_solver.solution = phase_field_solver.old_solution;
+		        phase_field_solver.use_old_time_step_phi = true;
+						pressure_solver.solution = pressure_solver.old_solution;
+		        goto redo_time_step;
+					}
 					phase_field_solver.relevant_solution = phase_field_solver.solution;
 
 					pcout << newton_step_results.first << "\t";
@@ -435,6 +461,7 @@ namespace EagleFrac
 	        time_step /= 10;
 	        time += time_step;
 	        phase_field_solver.solution = phase_field_solver.old_solution;
+					pressure_solver.solution = pressure_solver.old_solution;
 	        phase_field_solver.use_old_time_step_phi = true;
 	        goto redo_time_step;
 	      }  // end cut time step

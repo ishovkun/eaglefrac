@@ -27,7 +27,8 @@ namespace InputData
 		std::vector<double> 							displacement_boundary_values;
 		double                            porosity, fluid_compressibility,
 																			fluid_density, fluid_viscosity, perm_res,
-																			fracture_compressibility;
+																			fracture_compressibility,
+																			init_pressure;
 
     std::vector< RHS::Well<dim>*> wells;  // needs to be deleted in the end
 		RHS::Scheduler<dim>           schedule;
@@ -229,6 +230,7 @@ namespace InputData
 					// for (auto &item: coords)
 					// 	this->pcout << item << std::endl;
 			}
+			this->init_pressure = this->prm.get_double("Reservoir pressure");
 	    this->prm.leave_subsection();
 		}
 	  {  // Equation data

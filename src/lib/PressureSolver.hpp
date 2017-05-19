@@ -287,8 +287,8 @@ namespace FluidSolvers
 					// interpolate pereability
 					double K_eff =
 						(data.perm_res + xi_f*(perm_f - data.perm_res))/data.fluid_viscosity;
-					// K_eff = std::max(data.perm_res/data.fluid_viscosity, K_eff);
-					K_eff = std::max(1e-12, K_eff);
+					K_eff = std::max(data.perm_res/data.fluid_viscosity, K_eff);
+					// K_eff = std::max(1e-12, K_eff);
 
 					double source_term = 0;
 					for (unsigned int k=0; k<data.wells.size(); ++k)

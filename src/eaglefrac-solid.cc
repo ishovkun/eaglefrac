@@ -35,7 +35,7 @@ namespace EagleFrac
     void read_mesh();
     void setup_dofs();
     void impose_displacement_on_solution(double time);
-    void output_results(int time_step_number); //const;
+    void output_results(int time_step_number, double time); //const;
     void refine_mesh();
     void execute_postprocessing(const double time);
     void exectute_adaptive_refinement();
@@ -51,6 +51,8 @@ namespace EagleFrac
     InputData::PhaseFieldSolidData<dim> data;
     PhaseField::PhaseFieldSolver<dim> phase_field_solver;
     std::string input_file_name, case_name;
+
+		std::vector< std::pair<double,std::string> > times_and_names;
   };
 
 
@@ -178,7 +180,11 @@ namespace EagleFrac
         if (boost::filesystem::create_directory(output_directory_path))
            std::cout << "Success" << std::endl;
       }
-    }
+
+			// create directory for vtu's
+			boost::filesystem::path vtu_path("./" + case_name + "/vtu");
+			boost::filesystem::create_directory(vtu_path);
+    }  // end mpi=0
   }  // eom
 
   template <int dim>
@@ -187,23 +193,14 @@ namespace EagleFrac
     data.read_input_file(input_file_name);
     read_mesh();
 
-    // debug input
-    // Point<dim> p(3e-3, 0.01), p1(3e-3, 0.01905);
-    // pcout << "toughness " << data.get_fracture_toughness->value(p, 0) << std::endl;
-    // pcout << "toughness1 " << data.get_fracture_toughness->value(p1, 0) << std::endl;
-		// pcout << data.lame_constant << std::endl;
-		// pcout << data.shear_modulus << std::endl;
-		// pcout << data.displacement_boundary_velocities[0]*1 << std::endl;
-    // return;
-
     prepare_output_directories();
 
     // compute_runtime_parameters
     double minimum_mesh_size = Mesher::compute_minimum_mesh_size(triangulation,
                                                                  mpi_communicator);
     const int max_refinement_level =
-        data.n_prerefinement_steps
-      + data.initial_refinement_level
+        data.initial_refinement_level
+      // + data.n_prerefinement_steps
       + data.n_adaptive_steps;
 
     minimum_mesh_size /= std::pow(2, max_refinement_level);
@@ -211,13 +208,18 @@ namespace EagleFrac
 
     pcout << "min mesh size " << minimum_mesh_size << std::endl;
 
-    // local prerefinement
     triangulation.refine_global(data.initial_refinement_level);
-    Mesher::refine_region(triangulation,
-                          data.local_prerefinement_region,
-                          data.n_prerefinement_steps);
+  	phase_field_solver.setup_dofs();
 
-    phase_field_solver.setup_dofs();
+    // local prerefinement
+		for (int ref_step=0; ref_step<data.n_adaptive_steps; ++ref_step)
+		{
+			pcout << "Local_prerefinement" << std::endl;
+	    Mesher::refine_region(triangulation,
+	                          data.local_prerefinement_region,
+	                          1);
+    	phase_field_solver.setup_dofs();
+		}
 
     // set initial phase-field to 1
     phase_field_solver.solution.block(1) = 1;
@@ -290,8 +292,32 @@ namespace EagleFrac
           old_active_set = phase_field_solver.active_set;
         }  // end first newton step condition
 
-				std::pair<unsigned int, unsigned int> newton_step_results =
-        	phase_field_solver.solve_newton_step(time_steps);
+				std::pair<unsigned int, unsigned int> newton_step_results;
+
+				try
+				{
+					newton_step_results = phase_field_solver.solve_newton_step(time_steps);
+				}
+				catch (SolverControl::NoConvergence e)
+				{
+					computing_timer.exit_section();
+					pcout << "linear solver didn't converge!"
+								<< std::endl
+								<< "Adjusting time step to " << time_step/10
+								<< std::endl;
+					time -= time_step;
+					time_step /= 10;
+	        if (time_step/10 < data.minimum_time_step)
+	        {
+	          pcout << "Time step too small: aborting" << std::endl;
+	          std::cout.unsetf(std::ios_base::scientific);
+	          throw SolverControl::NoConvergence(0, 0);
+	        }
+					time += time_step;
+					phase_field_solver.solution = phase_field_solver.old_solution;
+					phase_field_solver.use_old_time_step_phi = true;
+					goto redo_time_step;
+				}
 
 				pcout << newton_step_results.first << "\t";
 				pcout << newton_step_results.second << "\t";
@@ -335,8 +361,8 @@ namespace EagleFrac
           goto redo_time_step;
         }
 
-      phase_field_solver.truncate_phase_field();
-      output_results(time_step_number);
+      // phase_field_solver.truncate_phase_field();
+      output_results(time_step_number, time);
       execute_postprocessing(time);
       // return;
 
@@ -387,7 +413,7 @@ namespace EagleFrac
 
 
   template <int dim>
-  void PDSSolid<dim>::output_results(int time_step_number) // const
+  void PDSSolid<dim>::output_results(int time_step_number, double time) // const
   {
     // Add data vectors to output
     std::vector<std::string> solution_names(dim, "displacement");
@@ -407,19 +433,29 @@ namespace EagleFrac
                              data_component_interpretation);
     // add active set
     data_out.add_data_vector(phase_field_solver.active_set, "active_set");
-    // data_out.add_data_vector(phase_field_solver.residual, "residual");
     // Add domain ids
     Vector<float> subdomain(triangulation.n_active_cells());
     for (unsigned int i=0; i<subdomain.size(); ++i)
       subdomain(i) = triangulation.locally_owned_subdomain();
     data_out.add_data_vector(subdomain, "subdomain");
+
+		// fracture toughness if not uniform
+		Vector<double> gc_vector;
+		if (!data.uniform_fracture_toughness)
+		{
+			gc_vector.reinit(triangulation.n_active_cells());
+			data.get_property_vector(*data.get_fracture_toughness,
+															 triangulation, gc_vector);
+	  	data_out.add_data_vector(gc_vector, "toughness");
+		}
+
     data_out.build_patches();
 
     int n_time_step_digits = 3,
         n_processor_digits = 3;
 
     // Write output from local processors
-    const std::string filename = ("./" + case_name + "/solution-" +
+    const std::string filename = ("./" + case_name + "/vtu/solution-" +
                                   Utilities::int_to_string(time_step_number,
                                                            n_time_step_digits) +
                                   "." +
@@ -440,14 +476,22 @@ namespace EagleFrac
                               Utilities::int_to_string(time_step_number,
                                                        n_time_step_digits) +
                               "." +
-                              Utilities::int_to_string (i,
-                                                        n_processor_digits) +
+                              Utilities::int_to_string (i, n_processor_digits) +
                               ".vtu");
+        std::string pvtu_filename =
+				  "solution-" +
+          Utilities::int_to_string(time_step_number, n_time_step_digits) +
+          ".pvtu";
         std::ofstream
-          master_output(("./" + case_name + "/solution-" +
-                         Utilities::int_to_string(time_step_number, n_time_step_digits) +
-                         ".pvtu").c_str());
+          master_output(("./" + case_name + "/vtu/" + pvtu_filename).c_str());
         data_out.write_pvtu_record(master_output, filenames);
+
+				// write pvd file
+				const std::string pvd_filename = "solution.pvd";
+				times_and_names.push_back
+					(std::pair<double,std::string> (time, "./vtu/" + pvtu_filename) );
+				std::ofstream pvd_master(("./" + case_name + "/" + pvd_filename).c_str());
+				data_out.write_pvd_record(pvd_master, times_and_names);
       }  // end master output
   } // EOM
 }  // end of namespace
@@ -466,7 +510,6 @@ std::string parse_command_line(int argc, char *const *argv) {
 
   int arg_number = 1;
   while (args.size()){
-    std::cout << args.front() << std::endl;
     if (arg_number == 1)
       filename = args.front();
     args.pop_front();

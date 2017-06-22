@@ -4,138 +4,24 @@
 #include <boost/algorithm/string.hpp>
 #include <boost/any.hpp>
 #include <cstdlib>
-// #include <typeinfo>  // for typeinfo :-)
 #include <deal.II/base/conditional_ostream.h>
 
 // custom modules
 #include <BitMap.hpp>
+#include <Parsers.hpp>
 
 
 namespace InputData {
   using namespace dealii;
 
-  template<typename T>
-  std::vector<T> parse_string_list(std::string list_string,
-                                   std::string delimiter=",")
-  {
-    std::vector<T> list;
-    T item;
-    if (list_string.size() == 0) return list;
-    std::vector<std::string> strs;
-    boost::split(strs, list_string, boost::is_any_of(delimiter));
-
-    for (const auto &string_item : strs)
-    {
-      std::stringstream convert(string_item);
-      convert >> item;
-      list.push_back(item);
-    }
-    return list;
-  }
-
-
-  template<>
-  std::vector<bool> parse_string_list(std::string list_string,
-                                      std::string delimiter)
-  {
-    // std::cout << "Parsing bool list" << std::endl;
-    std::vector<bool> list;
-    bool item;
-    if (list_string.size() == 0) return list;
-    std::vector<std::string> strs;
-    boost::split(strs, list_string, boost::is_any_of(delimiter));
-
-    for (auto &string_item : strs)
-    {
-      std::istringstream is(string_item);
-      is >> std::boolalpha >> item;
-      // std::cout << std::endl << string_item << std::endl;
-      // std::cout << item << std::endl;
-      list.push_back(item);
-    }
-    return list;
-  }
-
-
-	// convert string to a base type
-	template <typename T>
-	T convert(const std::string &str)
-	{
-    std::stringstream conv(str);
-		T result;
-		conv >> result;
-		return result;
-	}
-
-  template <int dim>
-  std::vector< Point<dim> > parse_point_list(const std::string &str)
-  {
-    // std::cout << str << std::endl;
-    std::vector< Point<dim> > points;
-    // std::vector<std::string> point_strings;
-    // int point_index = 0;
-    unsigned int i = 0;
-    // loop over symbols and get strings surrounded by ()
-    while (i < str.size())
-    {
-      if (str.compare(i, 1, "(") == 0)  // if str[i] == "(" -> begin point
-        {
-          std::string tmp;
-          while (i < str.size())
-          {
-            i++;
-
-            if (str.compare(i, 1, ")") != 0)
-              tmp.push_back(str[i]);
-            else
-              break;
-          }
-          // Add point
-          std::vector<double> coords = parse_string_list<double>(tmp);
-          Point<dim> point;
-          for (int p=0; p<dim; ++p)
-            point(p) = coords[p];
-          points.push_back(point);
-        }
-        i++;
-    }
-
-    return points;
-  }  // eom
-
-
-  std::vector<std::string> parse_pathentheses_list(const std::string &str)
-  {
-    std::vector<std::string> result;
-    unsigned int i = 0;
-    // loop over symbols and get strings surrounded by ()
-    while (i < str.size())
-    {
-      if (str.compare(i, 1, "(") == 0)  // if str[i] == "(" -> begin point
-      {
-        std::string tmp;
-        while (i < str.size())
-        {
-          i++;
-
-          if (str.compare(i, 1, ")") != 0)
-            tmp.push_back(str[i]);
-          else
-            break;
-       }  // end insize parentheses
-       // add what's inside parantheses
-       result.push_back(tmp);
-      }
-      i++;
-    }
-    return result;
-  }
-
-
-
   template <int dim>
   class PhaseFieldData
   {
+  public:
+		void
+		get_property_vector(const Function<dim> 														&func,
+	    									const parallel::distributed::Triangulation<dim> &triangulation,
+												Vector<double>      														&dst) const;
   public:
     double young_modulus, poisson_ratio, biot_coef,
            lame_constant, shear_modulus;
@@ -153,6 +39,30 @@ namespace InputData {
       *get_fracture_toughness;
 
   };
+
+	template <int dim>
+	void PhaseFieldData<dim>::
+	get_property_vector(const Function<dim> 														&func,
+    									const parallel::distributed::Triangulation<dim> &triangulation,
+											Vector<double>      														&dst) const
+  {
+		AssertThrow(dst.size() == triangulation.n_active_cells(),
+						 		ExcDimensionMismatch(dst.size(), triangulation.n_active_cells()));
+
+		typename parallel::distributed::Triangulation<dim>::active_cell_iterator
+			cell = triangulation.begin_active(),
+			endc = triangulation.end();
+
+		unsigned int idx = 0;
+
+	  for (; cell!=endc; ++cell)
+		{
+	    double value = func.value(cell->center(), 0);
+			dst[idx] = value;
+			idx++;
+		}
+	}	 // eom
+
 
   template <int dim>
   class PhaseFieldSolidData : public PhaseFieldData<dim>
@@ -184,6 +94,7 @@ namespace InputData {
     // postprocessing
     std::vector<std::string> postprocessing_function_names;
 
+    bool uniform_fracture_toughness, uniform_young_modulus;
     // this is a container for postprocessing function arguments
     // they can be strings, ints, or doubles
     std::vector< std::vector< boost::variant<int, double, std::string> > >
@@ -201,7 +112,6 @@ namespace InputData {
 		ConditionalOStream &pcout;
 
 	protected:
-    bool uniform_fracture_toughness, uniform_young_modulus;
     // Properties
     double fracture_toughness_constant;
     std::pair<double,double> fracture_toughness_limits, young_modulus_limits;
@@ -275,7 +185,6 @@ namespace InputData {
       prm.enter_subsection("Mesh");
       prm.declare_entry("Mesh file", "", Patterns::Anything());
       prm.declare_entry("Initial global refinement steps", "0", Patterns::Integer(0, 100));
-      prm.declare_entry("Local refinement steps", "0", Patterns::Integer(0, 100));
       prm.declare_entry("Adaptive steps", "0", Patterns::Integer(0, 100));
       prm.declare_entry("Adaptive phi value", "0", Patterns::Double(0, 1));
       prm.declare_entry("Local refinement region", "",
@@ -403,11 +312,10 @@ void PhaseFieldSolidData<dim>::assign_parameters()
     prm.enter_subsection("Mesh");
     mesh_file_name = prm.get("Mesh file");
     initial_refinement_level = prm.get_integer("Initial global refinement steps");
-    n_prerefinement_steps = prm.get_integer("Local refinement steps");
     n_adaptive_steps = prm.get_integer("Adaptive steps");
     phi_refinement_value = prm.get_double("Adaptive phi value");
     std::vector<double> tmp =
-      parse_string_list<double>(prm.get("Local refinement region"));
+      Parsers::parse_string_list<double>(prm.get("Local refinement region"));
     local_prerefinement_region.resize(dim);
     AssertThrow(tmp.size() == 2*dim,
                 ExcMessage("Wrong entry in Local refinement region"));
@@ -420,19 +328,19 @@ void PhaseFieldSolidData<dim>::assign_parameters()
   { // Boundary conditions
     prm.enter_subsection("Boundary conditions");
     this->displacement_boundary_labels =
-      parse_string_list<int>(prm.get("Displacement boundary labels"));
+      Parsers::parse_string_list<int>(prm.get("Displacement boundary labels"));
     this->displacement_boundary_components =
-      parse_string_list<int>(prm.get("Displacement boundary components"));
+      Parsers::parse_string_list<int>(prm.get("Displacement boundary components"));
     this->displacement_boundary_velocities =
-      parse_string_list<double>(prm.get("Displacement boundary velocities"));
+      Parsers::parse_string_list<double>(prm.get("Displacement boundary velocities"));
     this->displacement_points =
-      parse_point_list<dim>(prm.get("Displacement points"));
+      Parsers::parse_point_list<dim>(prm.get("Displacement points"));
     this->displacement_point_components =
-      parse_string_list<int>(prm.get("Displacement point components"));
+      Parsers::parse_string_list<int>(prm.get("Displacement point components"));
     this->displacement_point_velocities =
-      parse_string_list<double>(prm.get("Displacement point velocities"));
+      Parsers::parse_string_list<double>(prm.get("Displacement point velocities"));
     this->constraint_point_phase_field =
-      parse_string_list<bool>(prm.get("Constraint point phase field"));
+      Parsers::parse_string_list<bool>(prm.get("Constraint point phase field"));
     prm.leave_subsection();
   }
   {  // Equation data
@@ -448,7 +356,7 @@ void PhaseFieldSolidData<dim>::assign_parameters()
     {
       std::vector<double> tmp;
       tmp.resize(2);
-      tmp = parse_string_list<double>(prm.get("Fracture toughness range"));
+      tmp = Parsers::parse_string_list<double>(prm.get("Fracture toughness range"));
       this->fracture_toughness_limits.first = tmp[0];
       this->fracture_toughness_limits.second = tmp[1];
     }
@@ -459,7 +367,7 @@ void PhaseFieldSolidData<dim>::assign_parameters()
     {
       std::vector<double> tmp;
       tmp.resize(2);
-      tmp = parse_string_list<double>(prm.get("Young modulus range"));
+      tmp = Parsers::parse_string_list<double>(prm.get("Young modulus range"));
       this->young_modulus_limits.first = tmp[0];
       this->young_modulus_limits.second = tmp[1];
     }
@@ -468,7 +376,7 @@ void PhaseFieldSolidData<dim>::assign_parameters()
     this->regularization_parameter_kappa = prm.get_double("Regularization kappa");
     this->penalty_parameter = prm.get_double("Penalization c");
     std::vector<double> tmp =
-      parse_string_list<double>(prm.get("Regularization epsilon"));
+      Parsers::parse_string_list<double>(prm.get("Regularization epsilon"));
     regularization_epsilon_coefficients.first = tmp[0];
     regularization_epsilon_coefficients.second = tmp[1];
     // Ranges
@@ -476,7 +384,7 @@ void PhaseFieldSolidData<dim>::assign_parameters()
     // Bitmap file
     bitmap_file_name = prm.get("Bitmap file");
     std::vector<double> tmp1 =
-      parse_string_list<double>(prm.get("Bitmap range"));
+      Parsers::parse_string_list<double>(prm.get("Bitmap range"));
     bitmap_range.resize(dim);
     // std::cout << tmp1.size() << std::endl;
     if (tmp1.size() > 0)
@@ -491,7 +399,7 @@ void PhaseFieldSolidData<dim>::assign_parameters()
     prm.enter_subsection("Solver");
     this->t_max = prm.get_double("T max");
     std::vector<Point<2> > tmp =
-        parse_point_list<2>(prm.get("Time stepping table"));
+        Parsers::parse_point_list<2>(prm.get("Time stepping table"));
     for (const auto &row : tmp)
       this->timestep_table[row[0]] = row[1];
 
@@ -503,10 +411,10 @@ void PhaseFieldSolidData<dim>::assign_parameters()
   { // Postprocessing
     prm.enter_subsection("Postprocessing");
     postprocessing_function_names =
-        parse_string_list<std::string>(prm.get("Functions"));
+        Parsers::parse_string_list<std::string>(prm.get("Functions"));
 
     std::vector<std::string> tmp =
-        parse_pathentheses_list(prm.get("Arguments"));
+        Parsers::parse_pathentheses_list(prm.get("Arguments"));
 
     AssertThrow(tmp.size() == postprocessing_function_names.size(),
                 ExcMessage("Number of argument groups needs to match number of functions"));
@@ -526,7 +434,7 @@ void PhaseFieldSolidData<dim>::assign_parameters()
           // std::stringstream convert(arg);
           // int item;
           // convert >> item;
-					int item = convert<int>(arg);
+					int item = Parsers::convert<int>(arg);
           args.push_back(item);
         }
       }

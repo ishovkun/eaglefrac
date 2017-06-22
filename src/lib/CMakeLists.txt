@@ -15,6 +15,7 @@ ADD_LIBRARY(lib
   SinglePhaseData.hpp
   Well.hpp
   Scheduler.hpp
+  Parsers.hpp
 )
 
 DEAL_II_SETUP_TARGET(lib)

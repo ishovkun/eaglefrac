@@ -139,7 +139,7 @@ namespace InputData
 	    this->n_adaptive_steps = this->prm.get_integer("Adaptive steps");
 	    this->phi_refinement_value = this->prm.get_double("Adaptive phi value");
 	    std::vector<double> tmp =
-	      parse_string_list<double>(this->prm.get("Local refinement region"));
+	      Parsers::parse_string_list<double>(this->prm.get("Local refinement region"));
 	    this->local_prerefinement_region.resize(dim);
 	    AssertThrow(tmp.size() == 2*dim,
 	                ExcMessage("Wrong entry in Local refinement region"));
@@ -152,11 +152,11 @@ namespace InputData
 	  { // Boundary conditions
 	    this->prm.enter_subsection("Boundary conditions");
 	    this->displacement_boundary_labels =
-	      parse_string_list<int>(this->prm.get("Displacement boundary labels"));
+	      Parsers::parse_string_list<int>(this->prm.get("Displacement boundary labels"));
 	    this->displacement_boundary_components =
-	      parse_string_list<int>(this->prm.get("Displacement boundary components"));
+	      Parsers::parse_string_list<int>(this->prm.get("Displacement boundary components"));
 	    this->displacement_boundary_values =
-	      parse_string_list<double>(this->prm.get("Displacement boundary velocities"));
+	      Parsers::parse_string_list<double>(this->prm.get("Displacement boundary velocities"));
 	    // this->displacement_boundary_velocities =
 	    //   parse_string_list<double>(this->prm.get("Displacement boundary velocities"));
 	    // this->displacement_points =
@@ -172,13 +172,13 @@ namespace InputData
 		{ // initial conditions
 	    this->prm.enter_subsection("Initial conditions");
 			std::vector<std::string> tmp_vector;
-			tmp_vector = parse_pathentheses_list(this->prm.get("Defects"));
+			tmp_vector = Parsers::parse_pathentheses_list(this->prm.get("Defects"));
 			// for (auto &item: tmp_vector)
 			// 	this->pcout << item << std::endl;
 			for (unsigned int i = 0; i<tmp_vector.size(); ++i)
 			{
 				std::vector<double> coords =
-					parse_string_list<double>(tmp_vector[i]);
+					Parsers::parse_string_list<double>(tmp_vector[i]);
 				AssertThrow(coords.size() == 2*dim, ExcMessage("Error in Defects"));
 				defect_coordinates.push_back(coords);
 					// for (auto &item: coords)
@@ -212,7 +212,7 @@ namespace InputData
 	    {
 	      std::vector<double> tmp;
 	      tmp.resize(2);
-	      tmp = parse_string_list<double>(this->prm.get("Fracture toughness range"));
+	      tmp = Parsers::parse_string_list<double>(this->prm.get("Fracture toughness range"));
 	      this->fracture_toughness_limits.first = tmp[0];
 	      this->fracture_toughness_limits.second = tmp[1];
 	    }
@@ -223,7 +223,7 @@ namespace InputData
 	    {
 	      std::vector<double> tmp;
 	      tmp.resize(2);
-	      tmp = parse_string_list<double>(this->prm.get("Young modulus range"));
+	      tmp = Parsers::parse_string_list<double>(this->prm.get("Young modulus range"));
 	      this->young_modulus_limits.first = tmp[0];
 	      this->young_modulus_limits.second = tmp[1];
 	    }
@@ -233,7 +233,7 @@ namespace InputData
 	    this->regularization_parameter_kappa = this->prm.get_double("Regularization kappa");
 	    this->penalty_parameter = this->prm.get_double("Penalization c");
 	    std::vector<double> tmp =
-	      parse_string_list<double>(this->prm.get("Regularization epsilon"));
+	      Parsers::parse_string_list<double>(this->prm.get("Regularization epsilon"));
 	    this->regularization_epsilon_coefficients.first = tmp[0];
 	    this->regularization_epsilon_coefficients.second = tmp[1];
 	    // Ranges
@@ -241,7 +241,7 @@ namespace InputData
 	    // Bitmap file
 	    this->bitmap_file_name = this->prm.get("Bitmap file");
 	    std::vector<double> tmp1 =
-	      parse_string_list<double>(this->prm.get("Bitmap range"));
+	      Parsers::parse_string_list<double>(this->prm.get("Bitmap range"));
 	    this->bitmap_range.resize(dim);
 	    // std::cout << tmp1.size() << std::endl;
 	    if (tmp1.size() > 0)
@@ -256,7 +256,7 @@ namespace InputData
 	    this->prm.enter_subsection("Solver");
 	    this->t_max = this->prm.get_double("T max");
 	    std::vector<Point<2> > tmp =
-	        parse_point_list<2>(this->prm.get("Time stepping table"));
+	        Parsers::parse_point_list<2>(this->prm.get("Time stepping table"));
 	    for (const auto &row : tmp)
 	      this->timestep_table[row[0]] = row[1];
 
@@ -268,10 +268,10 @@ namespace InputData
 	  { // Postprocessing
 	    this->prm.enter_subsection("Postprocessing");
 	    this->postprocessing_function_names =
-	        parse_string_list<std::string>(this->prm.get("Functions"));
+	        Parsers::parse_string_list<std::string>(this->prm.get("Functions"));
 
 	    std::vector<std::string> tmp =
-	        parse_pathentheses_list(this->prm.get("Arguments"));
+	        Parsers::parse_pathentheses_list(this->prm.get("Arguments"));
 
 	    AssertThrow(tmp.size() == this->postprocessing_function_names.size(),
 	                ExcMessage("Number of argument groups needs to match number of functions"));
@@ -289,9 +289,7 @@ namespace InputData
 	      { // this function takes only a list of integers
 	        for (const auto &arg : string_vector)
 	        {
-	          std::stringstream convert(arg);
-	          int item;
-	          convert >> item;
+						int item = Parsers::convert<int>(arg);
 	          args.push_back(item);
 	        }
 	      }  // end boundary load
@@ -302,30 +300,31 @@ namespace InputData
 					AssertThrow(string_vector.size() == 4,
 				              ExcMessage("Number of arguments in COD is wrong"));
 					{ // convert first argument to double
-	          std::stringstream convert(string_vector[0]);
-	          double double_item;
-	          convert >> double_item;
-	          args.push_back(double_item);
+	          // std::stringstream convert(string_vector[0]);
+	          // double double_item;
+	          // convert >> double_item;
+						double item = Parsers::convert<double>(string_vector[0]);
+	          args.push_back(item);
 					}
 					{ // convert second argument to double
-	          std::stringstream convert(string_vector[1]);
-	          double double_item;
-	          convert >> double_item;
-	          args.push_back(double_item);
+	          // std::stringstream convert(string_vector[1]);
+	          // double double_item;
+	          // convert >> double_item;
+						double item = Parsers::convert<double>(string_vector[1]);
+	          args.push_back(item);
 					}
 					{ // convert third argument to int
-	          std::stringstream convert(string_vector[2]);
-	          int int_item;
-	          convert >> int_item;
-	          args.push_back(int_item);
+	          // std::stringstream convert(string_vector[2]);
+	          // int int_item;
+	          // convert >> int_item;
+						int item = Parsers::convert<int>(string_vector[2]);
+	          args.push_back(item);
 					}
 					{ // convert fourth argument to int
-	          std::stringstream convert(string_vector[3]);
-	          int int_item;
-	          convert >> int_item;
-						AssertThrow(int_item < dim,
+						int item = Parsers::convert<int>(string_vector[3]);
+						AssertThrow(item < dim,
 						            ExcMessage("COD direction parameter should be < dim"));
-	          args.push_back(int_item);
+	          args.push_back(item);
 						// std::stringstream convert
 					}
 				}

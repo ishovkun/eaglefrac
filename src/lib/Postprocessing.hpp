@@ -131,4 +131,71 @@ namespace Postprocessing {
 
 		return cod_values;
 	}  // eom
+
+	template <int dim>
+	Vector<double>
+	get_point_values(const DoFHandler<dim> 									  &dof_handler,
+								 	 const TrilinosWrappers::MPI::BlockVector &solution,
+									 const unsigned int                       comp,
+									 const std::vector< Point<dim> >          &points,
+									 MPI_Comm                                 &mpi_communicator)
+	{
+		// returns values in vertices closest to points
+		const unsigned int n_points = points.size();
+		std::vector<double> min_distances(n_points);
+  	std::vector<types::global_dof_index> closest_vertex_idx(n_points);
+	  for (unsigned int i=0; i<n_points; ++i)
+	  {
+	    min_distances[i] = std::numeric_limits<double>::max();
+	    closest_vertex_idx[i] = std::numeric_limits<unsigned int>::max();
+	  }
+
+		typename DoFHandler<dim>::active_cell_iterator
+			cell = dof_handler.begin_active(),
+			endc = dof_handler.end();
+
+	  for (; cell != endc; ++cell)
+	  {
+	    if (cell->is_artificial())
+	      continue;
+
+	    for (unsigned int v=0; v<GeometryInfo<dim>::vertices_per_cell; ++v)
+	    {
+	      for (unsigned int p=0; p<n_points; ++p)
+	      {
+	        const double distance = points[p].distance(cell->vertex(v));
+
+	        // check if point is the closest so far
+	        if (distance < min_distances[p])
+	        {
+	          types::global_dof_index idx =
+	              cell->vertex_dof_index(v, comp);
+	          closest_vertex_idx[p] = idx;
+	          min_distances[p] = distance;
+	        } // if found a better point
+	      }  // end target point loop
+	    } // end vertex loop
+	  }  // end cell loop
+
+	  // now we need to make sure that only the process with the closest cells
+	  // gets to read the value
+		Vector<double> values(n_points);
+	  for (unsigned int p=0; p<n_points; ++p)
+	  {
+			values[p] = std::numeric_limits<double>::max();
+	    double global_min_distance = Utilities::MPI::min(min_distances[p],
+	                                                     mpi_communicator);
+	    if (global_min_distance == min_distances[p])
+				{
+					values[p] = solution[closest_vertex_idx[p]];
+					// std::cout << values[p] << std::endl;
+					// std::cout << points[p] << std::endl;
+				}
+	  } // end point loop
+
+	  for (unsigned int p=0; p<n_points; ++p)
+			values[p] = Utilities::MPI::min(values[p], mpi_communicator);
+		// std::cout << values[0] << std::endl;
+		return values;
+	}  // eom
 }  // end of namespace

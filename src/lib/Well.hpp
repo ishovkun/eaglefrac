@@ -41,8 +41,10 @@ namespace RHS
 
 		void set_control(const WellControl &control);
 
+	  public:
+			const Point<dim> true_location;
+
 		private:
-			const Point<dim> &true_location;
 			double 					 flow_rate;
 			Point<dim>       closest_cell_center;
 			double					 location_radius;

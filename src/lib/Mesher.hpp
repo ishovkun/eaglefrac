@@ -120,6 +120,20 @@ namespace Mesher {
 
       for (; cell != endc; ++cell)
         if (cell->is_locally_owned())
+				{
+					if (
+            cell->center()[0] > region[0].first
+						&&
+            cell->center()[0] < region[0].second
+						&&
+            cell->center()[1] > region[1].first
+						&&
+            cell->center()[1] < region[1].second
+					)
+					{
+						cell->set_refine_flag();
+						continue;
+					}
           for (unsigned int v=0; v<GeometryInfo<dim>::vertices_per_cell; ++v)
             if (
               cell->vertex(v)[0] > region[0].first
@@ -134,6 +148,7 @@ namespace Mesher {
               cell->set_refine_flag();
               break;
             }
+				}
 
       triangulation.execute_coarsening_and_refinement();
     }  // end cycle loop

@@ -44,120 +44,122 @@ template <int dim>
 class PhaseFieldSolver
 {
 public:
-// methods
-PhaseFieldSolver(MPI_Comm                                  &mpi_communicator,
-                 parallel::distributed::Triangulation<dim> &triangulation_,
-                 InputData::PhaseFieldData<dim>            &data_,
-                 ConditionalOStream                        &pcout_,
-                 TimerOutput                               &computing_timer_);
-~PhaseFieldSolver();
+	// methods
+	PhaseFieldSolver(MPI_Comm                                  &mpi_communicator,
+	                 parallel::distributed::Triangulation<dim> &triangulation_,
+	                 InputData::PhaseFieldData<dim>            &data_,
+	                 ConditionalOStream                        &pcout_,
+	                 TimerOutput                               &computing_timer_);
+	~PhaseFieldSolver();
 
-void setup_dofs();
-double residual_norm() const;
+	void setup_dofs();
+	double residual_norm() const;
 
-void assemble_system(const TrilinosWrappers::MPI::BlockVector &,
-                     const std::pair<double,double> &,
-                     bool assemble_matrix=true);
-// more simple assembly function interface
-void assemble_system(const std::pair<double,double> &);
+	void assemble_system(const TrilinosWrappers::MPI::BlockVector &,
+	                     const std::pair<double,double> &,
+	                     bool assemble_matrix=true);
+	// more simple assembly function interface
+	void assemble_system(const std::pair<double,double> &);
 
-// assmbly method for coupled (with pressure) system
-void
-assemble_coupled_system(const TrilinosWrappers::MPI::BlockVector &linerarization_point,
-												const TrilinosWrappers::MPI::BlockVector &pressure_relevant_solution,
-                				const std::pair<double,double> 					 &time_steps,
-                				const bool 															 include_pressure,
-                				const bool 															 assemble_matrix);
+	// assmbly method for coupled (with pressure) system
+	void
+	assemble_coupled_system(const TrilinosWrappers::MPI::BlockVector &linerarization_point,
+													const TrilinosWrappers::MPI::BlockVector &pressure_relevant_solution,
+	                				const std::pair<double,double> 					 &time_steps,
+	                				const bool 															 include_pressure,
+	                				const bool 															 assemble_matrix);
 
-double compute_nonlinear_residual(const TrilinosWrappers::MPI::BlockVector &,
-                                  const std::pair<double, double> &);
-// simplified interface
-double compute_nonlinear_residual(const std::pair<double, double> &);
+	double compute_nonlinear_residual(const TrilinosWrappers::MPI::BlockVector &,
+	                                  const std::pair<double, double> &);
+	// simplified interface
+	double compute_nonlinear_residual(const std::pair<double, double> &);
 
-void compute_active_set(TrilinosWrappers::MPI::BlockVector &);
+	void compute_active_set(TrilinosWrappers::MPI::BlockVector &);
 
-void impose_displacement(const std::vector<int>          &,
-                         const std::vector<int>          &,
-                         const std::vector<double>       &,
-                         const std::vector< Point<dim> > &,
-                         const std::vector<int>          &,
-                         const std::vector<double>        &,
-                         const std::vector<bool>          &);
-unsigned int solve();
-std::pair<unsigned int, unsigned int>
-	solve_newton_step(const std::pair<double,double> &time_steps);
+	void impose_displacement(const std::vector<int>          &,
+	                         const std::vector<int>          &,
+	                         const std::vector<double>       &,
+	                         const std::vector< Point<dim> > &,
+	                         const std::vector<int>          &,
+	                         const std::vector<double>        &,
+	                         const std::vector<bool>          &);
+	unsigned int solve();
+	std::pair<unsigned int, unsigned int>
+		solve_newton_step(const std::pair<double,double> &time_steps);
 
-std::pair<unsigned int, unsigned int>
-solve_coupled_newton_step(const TrilinosWrappers::MPI::BlockVector &pressure_solution,
-													const std::pair<double,double> 		 			 &time_steps);
+	std::pair<unsigned int, unsigned int>
+	solve_coupled_newton_step(const TrilinosWrappers::MPI::BlockVector &pressure_solution,
+														const std::pair<double,double> 		 			 &time_steps);
 
-void update_old_solution();
-bool active_set_changed(const IndexSet &) const;
-void truncate_phase_field();
-unsigned int active_set_size() const;
-void set_coupling(const DoFHandler<dim>            &,
-	           			const FESystem<dim>   					 &,
-						 			const FEValuesExtractors::Scalar &);
-double linear_residual(TrilinosWrappers::MPI::BlockVector &);
-
-private:
-// this function also computes finest mesh size
-void assemble_mass_matrix_diagonal();
-void setup_preconditioners();
-void impose_boundary_displacement(const std::vector<int>       &,
-                                  const std::vector<int>       &,
-                                  const std::vector<double>    &);
-void impose_node_displacement(const std::vector < Point<dim> > &,
-                              const std::vector<int>           &,
-                              const std::vector<double>        &,
-                              const std::vector<bool>          &);
-
-public:
-// variables
-MPI_Comm &mpi_communicator;
-parallel::distributed::Triangulation<dim> &triangulation;
-InputData::PhaseFieldData<dim> &data;
-DoFHandler<dim> dof_handler;
+	void update_old_solution();
+	bool active_set_changed(const IndexSet &) const;
+	void truncate_phase_field();
+	unsigned int active_set_size() const;
+	void set_coupling(const DoFHandler<dim>            &,
+		           			const FESystem<dim>   					 &,
+							 			const FEValuesExtractors::Scalar &);
+	double linear_residual(TrilinosWrappers::MPI::BlockVector &);
 
 private:
-ConditionalOStream &pcout;
-TimerOutput &computing_timer;
-
-public:
-std::vector<IndexSet> owned_partitioning, relevant_partitioning;
-
-private:
-IndexSet locally_owned_dofs, locally_relevant_dofs;
-
-std::vector< std::vector<bool> > constant_modes;      // need for solver
-
-TrilinosWrappers::MPI::BlockVector mass_matrix_diagonal_relevant;
-TrilinosWrappers::MPI::BlockVector relevant_residual;
-
-TrilinosWrappers::BlockSparseMatrix system_matrix;
-TrilinosWrappers::BlockSparseMatrix preconditioner_matrix;
-
-TrilinosWrappers::PreconditionAMG prec_displacement, prec_phase_field;
-
-// Pointers to couple with pore pressure
-// these are set by method set_coupling
-const DoFHandler<dim> *p_pressure_dof_handler;
-const FESystem<dim> *p_pressure_fe;
-const FEValuesExtractors::Scalar *p_pressure_extractor;
+	// this function also computes finest mesh size
+	void assemble_mass_matrix_diagonal();
+	void setup_preconditioners();
+	void impose_boundary_displacement(const std::vector<int>       &,
+	                                  const std::vector<int>       &,
+	                                  const std::vector<double>    &);
+	void impose_node_displacement(const std::vector < Point<dim> > &,
+	                              const std::vector<int>           &,
+	                              const std::vector<double>        &,
+	                              const std::vector<bool>          &);
 
 
-public:
-FESystem<dim> fe;
-double time_step;
-IndexSet active_set;
-TrilinosWrappers::MPI::BlockVector solution, solution_update, residual;
-TrilinosWrappers::MPI::BlockVector old_solution, old_old_solution,
-                                   relevant_solution;
-TrilinosWrappers::MPI::BlockVector owned_storage_vector;
-TrilinosWrappers::MPI::BlockVector rhs_vector;
-ConstraintMatrix physical_constraints, all_constraints, hanging_nodes_constraints;
-bool use_old_time_step_phi;
-int  decompose_stress;
+
+	public:
+	// variables
+	MPI_Comm &mpi_communicator;
+	parallel::distributed::Triangulation<dim> &triangulation;
+	InputData::PhaseFieldData<dim> &data;
+	DoFHandler<dim> dof_handler;
+
+	private:
+	ConditionalOStream &pcout;
+	TimerOutput &computing_timer;
+
+	public:
+	std::vector<IndexSet> owned_partitioning, relevant_partitioning;
+
+	private:
+	IndexSet locally_owned_dofs, locally_relevant_dofs;
+
+	std::vector< std::vector<bool> > constant_modes;      // need for solver
+
+	TrilinosWrappers::MPI::BlockVector mass_matrix_diagonal_relevant;
+	TrilinosWrappers::MPI::BlockVector relevant_residual;
+
+	TrilinosWrappers::BlockSparseMatrix system_matrix;
+	TrilinosWrappers::BlockSparseMatrix preconditioner_matrix;
+
+	TrilinosWrappers::PreconditionAMG prec_displacement, prec_phase_field;
+
+	// Pointers to couple with pore pressure
+	// these are set by method set_coupling
+	const DoFHandler<dim> *p_pressure_dof_handler;
+	const FESystem<dim> *p_pressure_fe;
+	const FEValuesExtractors::Scalar *p_pressure_extractor;
+
+
+	public:
+	FESystem<dim> fe;
+	double time_step;
+	IndexSet active_set;
+	TrilinosWrappers::MPI::BlockVector solution, solution_update, residual;
+	TrilinosWrappers::MPI::BlockVector old_solution, old_old_solution,
+	                                   relevant_solution;
+	TrilinosWrappers::MPI::BlockVector owned_storage_vector;
+	TrilinosWrappers::MPI::BlockVector rhs_vector;
+	ConstraintMatrix physical_constraints, all_constraints, hanging_nodes_constraints;
+	bool use_old_time_step_phi;
+	int  decompose_stress;
 
 };
 
@@ -1083,7 +1085,7 @@ impose_node_displacement(const std::vector < Point<dim> > &displacement_points,
           min_distances[p] = distance;
           if (constraint_point_phase_field[p])
           {
-            idx = cell->vertex_dof_index(v, dim);  // phase-field
+            idx = cell->vertex_dof_index(v, dim);  // dim = phase-field
             constrained_phi_nodes[p] = idx;
           }
         }

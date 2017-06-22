@@ -283,12 +283,13 @@ namespace FluidSolvers
 					double perm_f = 1.0/12.0*w*w;   // fracture perm from lubrication theory
 					// perm_f = 10*data.perm_res;
 					// perm_f = 1e-11;
+					perm_f = std::max(1e-12, perm_f);
 
 					// interpolate pereability
 					double K_eff =
 						(data.perm_res + xi_f*(perm_f - data.perm_res))/data.fluid_viscosity;
+
 					K_eff = std::max(data.perm_res/data.fluid_viscosity, K_eff);
-					// K_eff = std::max(1e-12, K_eff);
 
 					double source_term = 0;
 					for (unsigned int k=0; k<data.wells.size(); ++k)

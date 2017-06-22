@@ -29,6 +29,7 @@ namespace InputData
 																			fluid_density, fluid_viscosity, perm_res,
 																			fracture_compressibility,
 																			init_pressure;
+    int max_pds_steps;
 
     std::vector< RHS::Well<dim>*> wells;  // needs to be deleted in the end
 		RHS::Scheduler<dim>           schedule;
@@ -152,7 +153,8 @@ namespace InputData
       this->prm.declare_entry("Time stepping table", "(0, 1e-5)", Patterns::Anything());
       this->prm.declare_entry("Minimum time step", "1e-9", Patterns::Double());
       this->prm.declare_entry("Newton tolerance", "1e-9", Patterns::Double());
-      this->prm.declare_entry("Max Newton steps", "20", Patterns::Integer());
+      this->prm.declare_entry("Max PDS steps", "100", Patterns::Integer());
+      this->prm.declare_entry("Max FSS steps", "100", Patterns::Integer());
       this->prm.leave_subsection();
     }
     {
@@ -185,7 +187,7 @@ namespace InputData
 	    this->n_adaptive_steps = this->prm.get_integer("Adaptive steps");
 	    this->phi_refinement_value = this->prm.get_double("Adaptive phi value");
 	    std::vector<double> tmp =
-	      parse_string_list<double>(this->prm.get("Local refinement region"));
+	      Parsers::parse_string_list<double>(this->prm.get("Local refinement region"));
 	    this->local_prerefinement_region.resize(dim);
 	    AssertThrow(tmp.size() == 2*dim,
 	                ExcMessage("Wrong entry in Local refinement region"));
@@ -198,11 +200,11 @@ namespace InputData
 	  { // Boundary conditions
 	    this->prm.enter_subsection("Boundary conditions");
 	    this->displacement_boundary_labels =
-	      parse_string_list<int>(this->prm.get("Displacement boundary labels"));
+	      Parsers::parse_string_list<int>(this->prm.get("Displacement boundary labels"));
 	    this->displacement_boundary_components =
-	      parse_string_list<int>(this->prm.get("Displacement boundary components"));
+	      Parsers::parse_string_list<int>(this->prm.get("Displacement boundary components"));
 	    this->displacement_boundary_values =
-	      parse_string_list<double>(this->prm.get("Displacement boundary values"));
+	      Parsers::parse_string_list<double>(this->prm.get("Displacement boundary values"));
 	    // this->displacement_boundary_velocities =
 	    //   parse_string_list<double>(this->prm.get("Displacement boundary velocities"));
 	    // this->displacement_points =
@@ -218,13 +220,13 @@ namespace InputData
 		{ // initial conditions
 	    this->prm.enter_subsection("Initial conditions");
 			std::vector<std::string> tmp_vector;
-			tmp_vector = parse_pathentheses_list(this->prm.get("Defects"));
+			tmp_vector = Parsers::parse_pathentheses_list(this->prm.get("Defects"));
 			// for (auto &item: tmp_vector)
 			// 	this->pcout << item << std::endl;
 			for (unsigned int i = 0; i<tmp_vector.size(); ++i)
 			{
 				std::vector<double> coords =
-					parse_string_list<double>(tmp_vector[i]);
+					Parsers::parse_string_list<double>(tmp_vector[i]);
 				AssertThrow(coords.size() == 2*dim, ExcMessage("Error in Defects"));
 				defect_coordinates.push_back(coords);
 					// for (auto &item: coords)
@@ -246,7 +248,7 @@ namespace InputData
 	    {
 	      std::vector<double> tmp;
 	      tmp.resize(2);
-	      tmp = parse_string_list<double>(this->prm.get("Fracture toughness range"));
+	      tmp = Parsers::parse_string_list<double>(this->prm.get("Fracture toughness range"));
 	      this->fracture_toughness_limits.first = tmp[0];
 	      this->fracture_toughness_limits.second = tmp[1];
 	    }
@@ -257,7 +259,7 @@ namespace InputData
 	    {
 	      std::vector<double> tmp;
 	      tmp.resize(2);
-	      tmp = parse_string_list<double>(this->prm.get("Young modulus range"));
+	      tmp = Parsers::parse_string_list<double>(this->prm.get("Young modulus range"));
 	      this->young_modulus_limits.first = tmp[0];
 	      this->young_modulus_limits.second = tmp[1];
 	    }
@@ -274,7 +276,7 @@ namespace InputData
 	    this->regularization_parameter_kappa = this->prm.get_double("Regularization kappa");
 	    this->penalty_parameter = this->prm.get_double("Penalization c");
 	    std::vector<double> tmp =
-	      parse_string_list<double>(this->prm.get("Regularization epsilon"));
+	      Parsers::parse_string_list<double>(this->prm.get("Regularization epsilon"));
 	    this->regularization_epsilon_coefficients.first = tmp[0];
 	    this->regularization_epsilon_coefficients.second = tmp[1];
 	    // Ranges
@@ -282,7 +284,7 @@ namespace InputData
 	    // Bitmap file
 	    this->bitmap_file_name = this->prm.get("Bitmap file");
 	    std::vector<double> tmp1 =
-	      parse_string_list<double>(this->prm.get("Bitmap range"));
+	      Parsers::parse_string_list<double>(this->prm.get("Bitmap range"));
 	    this->bitmap_range.resize(dim);
 	    // std::cout << tmp1.size() << std::endl;
 	    if (tmp1.size() > 0)
@@ -297,22 +299,23 @@ namespace InputData
 	    this->prm.enter_subsection("Solver");
 	    this->t_max = this->prm.get_double("T max");
 	    std::vector<Point<2> > tmp =
-	        parse_point_list<2>(this->prm.get("Time stepping table"));
+	        Parsers::parse_point_list<2>(this->prm.get("Time stepping table"));
 	    for (const auto &row : tmp)
 	      this->timestep_table[row[0]] = row[1];
 
 	    this->minimum_time_step = this->prm.get_double("Minimum time step");
 	    this->newton_tolerance = this->prm.get_double("Newton tolerance");
-	    this->max_newton_iter = this->prm.get_integer("Max Newton steps");
+	    this->max_newton_iter = this->prm.get_integer("Max PDS steps");
+	    this->max_pds_steps = this->prm.get_integer("Max FSS steps");
 	    this->prm.leave_subsection();
 	  }
 	  { // Postprocessing
 	    this->prm.enter_subsection("Postprocessing");
 	    this->postprocessing_function_names =
-	        parse_string_list<std::string>(this->prm.get("Functions"));
+	        Parsers::parse_string_list<std::string>(this->prm.get("Functions"));
 
 	    std::vector<std::string> tmp =
-	        parse_pathentheses_list(this->prm.get("Arguments"));
+	        Parsers::parse_pathentheses_list(this->prm.get("Arguments"));
 
 	    AssertThrow(tmp.size() == this->postprocessing_function_names.size(),
 	                ExcMessage("Number of argument groups needs to match number of functions"));
@@ -329,7 +332,7 @@ namespace InputData
 	      { // this function takes only a list of integers
 	        for (const auto &arg : string_vector)
 	        {
-	          int item = convert<int>(arg);
+	          int item = Parsers::convert<int>(arg);
 	          args.push_back(item);
 	        }
 	      }
@@ -343,13 +346,13 @@ namespace InputData
 			this->prm.enter_subsection("Wells");
 			// WELL LOCATION
 			std::vector<std::string> loc_stv =
-	        parse_pathentheses_list(this->prm.get("Location"));
+	        Parsers::parse_pathentheses_list(this->prm.get("Location"));
 			// loop through wells
 	    for (unsigned int i=0; i<loc_stv.size(); i++)
 			{
 				// std::cout << loc_stv[i] << std::endl;
 				std::vector<std::string> item_stv =
-					parse_string_list<std::string>(loc_stv[i]);
+					Parsers::parse_string_list<std::string>(loc_stv[i]);
 				AssertThrow(item_stv.size() == 2+dim, ExcMessage("Wrong entry in Location"));
 
 				std::string well_name = item_stv[0];
@@ -357,11 +360,11 @@ namespace InputData
 				// loop well coordinates
         for (int j=1; j<=dim; ++j)
         {
-					double c = convert<double>(item_stv[j]);
+					double c = Parsers::convert<double>(item_stv[j]);
 					loc[j-1] = c;
 				}
 				// well radius
-        double radius = convert<double>(item_stv[dim+1]);
+        double radius = Parsers::convert<double>(item_stv[dim+1]);
 				this->wells.push_back(
 					new RHS::Well<dim>(loc, /*rate*/ 0, /*loc_radius*/ radius));
 
@@ -370,20 +373,20 @@ namespace InputData
 
 			// WELL SCHEDULE
 			std::vector<std::string> sch_stv =
-	        parse_pathentheses_list(this->prm.get("Schedule"));
+	        Parsers::parse_pathentheses_list(this->prm.get("Schedule"));
 			for (unsigned int l=0; l<sch_stv.size(); l++)
 			{
 				// std::cout << sch_stv[l] << std::endl;
 				std::vector<std::string> items =
-					parse_string_list<std::string>(sch_stv[l]);
+					Parsers::parse_string_list<std::string>(sch_stv[l]);
 				AssertThrow(items.size() == 4, ExcMessage("Wrong entry in Schedule"));
 
 				// format: time, name, control, value
-				double time = convert<double>(items[0]);
+				double time = Parsers::convert<double>(items[0]);
 				std::string wname = items[1];
-				unsigned int control = convert<unsigned int>(items[2]);
+				unsigned int control = Parsers::convert<unsigned int>(items[2]);
 				AssertThrow(control==0, ExcMessage("Only flow wells are implemented"));
-				double value = convert<double>(items[3]);
+				double value = Parsers::convert<double>(items[3]);
 				schedule.add_line(time, wname, control, value);
 			}
 

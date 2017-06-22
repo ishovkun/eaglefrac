@@ -301,7 +301,6 @@ namespace EagleFrac
     triangulation.refine_global(data.initial_refinement_level);
 		setup_dofs();
 
-		// for (int ref_step=0; ref_step<data.n_prerefinement_steps; ++ref_step)
 		for (int ref_step=0; ref_step<data.n_adaptive_steps; ++ref_step)
 		{
 			pcout << "Local_prerefinement" << std::endl;
@@ -318,7 +317,9 @@ namespace EagleFrac
 			phase_field_solver.dof_handler,
 			 InitialValues::Defects<dim>(data.defect_coordinates,
 																	  // idk why e/2, it just works better
-																 	 data.regularization_parameter_epsilon/2),
+																	 //  data.regularization_parameter_epsilon/2),
+																	//  2*minimum_mesh_size),
+																	 minimum_mesh_size),
 		   phase_field_solver.solution
 		 );
 
@@ -342,6 +343,7 @@ namespace EagleFrac
       phase_field_solver.use_old_time_step_phi = true;
 
     redo_time_step:
+			// std::cout.precision(1.0/std::static_cast<double>(time_step));
 			pcout  << std::endl
 						<< "_______________________________________________" << std::endl
 						<< "===============================================" << std::endl
@@ -424,6 +426,7 @@ namespace EagleFrac
 					}
 					catch (SolverControl::NoConvergence e)
 					{
+					  computing_timer.exit_section();
 						pcout << "linear solver didn't converge!"
 						      << "Adjusting time step to " << time_step/10
 									<< std::endl;
@@ -518,8 +521,9 @@ namespace EagleFrac
 		    // //   phase_field_solver.use_old_time_step_phi = true;
 			}  // end fss iteration
 
-      phase_field_solver.truncate_phase_field();
+      // phase_field_solver.truncate_phase_field();
       output_results(time_step_number, time);
+			execute_postprocessing(time);
 
       old_time_step = time_step;
 
@@ -673,33 +677,59 @@ namespace EagleFrac
   template <int dim>
   void SinglePhaseModel<dim>::execute_postprocessing(const double time)
   {
-  //   // just some commands so no compiler warnings
-  //   for (unsigned int i=0; i<data.postprocessing_function_names.size(); i++)
-  //   {
-  //     unsigned int l = data.postprocessing_function_names[i].size();
-  //     if (data.postprocessing_function_names[i].compare(0, l, "boundary_load") == 0)
-  //     {
-  //       int boundary_id =
-  //           boost::get<int>(data.postprocessing_function_args[i][0]);
-  //       Tensor<1,dim> load =
-  //         Postprocessing::compute_boundary_load(phase_field_solver,
-  //                                               data, boundary_id);
-  //       // Sum write output
-  //       if (Utilities::MPI::this_mpi_process(mpi_communicator) == 0)
-  //       {
-  //         std::ofstream ff;
-  //         ff.open("./" + case_name + "/boundary_load-" +
-  //                 Utilities::int_to_string(boundary_id, 1) +
-  //                 ".txt",
-  //                 std::ios_base::app);
-  //         ff << time << "\t"
-  //            << load[0] << "\t"
-  //            << load[1] << "\t"
-  //            << std::endl;
-  //       }
-  //     }  // end boundary load
-	//
-  //   }  // end loop over postprocessing functions
+    // just some commands so no compiler warnings
+    for (unsigned int i=0; i<data.postprocessing_function_names.size(); i++)
+    {
+      unsigned int l = data.postprocessing_function_names[i].size();
+      if (data.postprocessing_function_names[i].compare(0, l, "well_pressure") == 0)
+			{
+				auto & pressure_dof_handler = pressure_solver.get_dof_handler();
+				// get well points
+				const unsigned int n_wells = data.wells.size();
+				std::vector< Point<dim> > points(n_wells);
+				for (unsigned int w=0; w<n_wells; ++w)
+					points[w] = data.wells[w]->true_location;
+
+				Vector<double> pressure_values =
+					Postprocessing::get_point_values(
+						pressure_dof_handler, pressure_solver.relevant_solution,
+						/* comp = */ 0, points, mpi_communicator);
+
+	      // Sum write output
+        if (Utilities::MPI::this_mpi_process(mpi_communicator) == 0)
+        {
+          std::ofstream ff;
+          ff.open("./" + case_name + "/well_pressure.txt",
+                  std::ios_base::app);
+          ff << time << "\t";
+					for (unsigned int w=0; w<n_wells; ++w)
+						ff << pressure_values[w] << "\t";
+          ff << std::endl;
+        }  // end write file
+			}  // end well pressure
+      if (data.postprocessing_function_names[i].compare(0, l, "boundary_load") == 0)
+      {
+        int boundary_id =
+            boost::get<int>(data.postprocessing_function_args[i][0]);
+        Tensor<1,dim> load =
+          Postprocessing::compute_boundary_load(phase_field_solver,
+                                                data, boundary_id);
+        // Sum write output
+        if (Utilities::MPI::this_mpi_process(mpi_communicator) == 0)
+        {
+          std::ofstream ff;
+          ff.open("./" + case_name + "/boundary_load-" +
+                  Utilities::int_to_string(boundary_id, 1) +
+                  ".txt",
+                  std::ios_base::app);
+          ff << time << "\t"
+             << load[0] << "\t"
+             << load[1] << "\t"
+             << std::endl;
+        }
+      }  // end boundary load
+
+    }  // end loop over postprocessing functions
   }  // eom
 
 
@@ -763,8 +793,7 @@ namespace EagleFrac
                               Utilities::int_to_string(time_step_number,
                                                        n_time_step_digits) +
                               "." +
-                              Utilities::int_to_string (i,
-                                                        n_processor_digits) +
+                              Utilities::int_to_string (i, n_processor_digits) +
                               ".vtu");
         std::string pvtu_filename =
 				  "solution-" +
@@ -799,7 +828,6 @@ std::string parse_command_line(int argc, char *const *argv) {
 
   int arg_number = 1;
   while (args.size()){
-    std::cout << args.front() << std::endl;
     if (arg_number == 1)
       filename = args.front();
     args.pop_front();

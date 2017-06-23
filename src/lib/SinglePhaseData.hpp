@@ -205,16 +205,6 @@ namespace InputData
 	      Parsers::parse_string_list<int>(this->prm.get("Displacement boundary components"));
 	    this->displacement_boundary_values =
 	      Parsers::parse_string_list<double>(this->prm.get("Displacement boundary values"));
-	    // this->displacement_boundary_velocities =
-	    //   parse_string_list<double>(this->prm.get("Displacement boundary velocities"));
-	    // this->displacement_points =
-	    //   parse_point_list<dim>(this->prm.get("Displacement points"));
-	    // this->displacement_point_components =
-	    //   parse_string_list<int>(this->prm.get("Displacement point components"));
-	    // this->displacement_point_velocities =
-	    //   parse_string_list<double>(this->prm.get("Displacement point velocities"));
-	    // this->constraint_point_phase_field =
-	    //   parse_string_list<bool>(this->prm.get("Constraint point phase field"));
 	    this->prm.leave_subsection();
 	  }
 		{ // initial conditions
@@ -280,7 +270,7 @@ namespace InputData
 	    this->regularization_epsilon_coefficients.first = tmp[0];
 	    this->regularization_epsilon_coefficients.second = tmp[1];
 	    // Ranges
-	    // tmp.clear();
+
 	    // Bitmap file
 	    this->bitmap_file_name = this->prm.get("Bitmap file");
 	    std::vector<double> tmp1 =

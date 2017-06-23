@@ -53,6 +53,7 @@ namespace EagleFrac
     std::string input_file_name, case_name;
 
 		std::vector< std::pair<double,std::string> > times_and_names;
+    std::vector< Vector<double> > stresses;
   };
 
 
@@ -119,6 +120,21 @@ namespace EagleFrac
 
 
   template <int dim>
+  void PDSSolid<dim>::setup_dofs()
+  {
+    phase_field_solver.setup_dofs();
+
+    if (stresses.size() != dim)
+      stresses.resize(dim);
+
+    for (int i=0; i<dim; ++i)
+			stresses[i].reinit(triangulation.n_active_cells());
+      // stresses[i].reinit(triangulation.n_locally_owned_active_cells());
+
+  }  // eom
+
+
+  template <int dim>
   void PDSSolid<dim>::exectute_adaptive_refinement()
   {
     phase_field_solver.relevant_solution = phase_field_solver.solution;
@@ -133,7 +149,7 @@ namespace EagleFrac
     solution_transfer.prepare_for_coarsening_and_refinement(tmp);
     triangulation.execute_coarsening_and_refinement();
 
-    phase_field_solver.setup_dofs();
+    setup_dofs();
 
     TrilinosWrappers::MPI::BlockVector
       tmp_owned1(phase_field_solver.owned_partitioning, mpi_communicator),
@@ -209,7 +225,8 @@ namespace EagleFrac
     pcout << "min mesh size " << minimum_mesh_size << std::endl;
 
     triangulation.refine_global(data.initial_refinement_level);
-  	phase_field_solver.setup_dofs();
+  	// phase_field_solver.setup_dofs();
+    setup_dofs();
 
     // local prerefinement
 		for (int ref_step=0; ref_step<data.n_adaptive_steps; ++ref_step)
@@ -218,7 +235,7 @@ namespace EagleFrac
 	    Mesher::refine_region(triangulation,
 	                          data.local_prerefinement_region,
 	                          1);
-    	phase_field_solver.setup_dofs();
+    	setup_dofs();
 		}
 
     // set initial phase-field to 1
@@ -448,6 +465,10 @@ namespace EagleFrac
 															 triangulation, gc_vector);
 	  	data_out.add_data_vector(gc_vector, "toughness");
 		}
+
+    phase_field_solver.get_stresses(stresses);
+    data_out.add_data_vector(stresses[0], "sigma_xx");
+    data_out.add_data_vector(stresses[1], "sigma_yy");
 
     data_out.build_patches();
 

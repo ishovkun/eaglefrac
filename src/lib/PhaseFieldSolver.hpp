@@ -99,6 +99,7 @@ public:
 		           			const FESystem<dim>   					 &,
 							 			const FEValuesExtractors::Scalar &);
 	double linear_residual(TrilinosWrappers::MPI::BlockVector &);
+  void get_stresses(std::vector< Vector<double> > &dst);
 
 private:
 	// this function also computes finest mesh size
@@ -1259,12 +1260,87 @@ unsigned int PhaseFieldSolver<dim>::solve()
 }    // EOM
 
 
-template <int dim>
-double
-PhaseFieldSolver<dim>::
-linear_residual(TrilinosWrappers::MPI::BlockVector &dst)
-{
-	return system_matrix.residual(dst, solution_update, rhs_vector);
-}
+  template <int dim>
+  double
+  PhaseFieldSolver<dim>::
+  linear_residual(TrilinosWrappers::MPI::BlockVector &dst)
+  {
+    return system_matrix.residual(dst, solution_update, rhs_vector);
+  }
+
+  // template <int dim>
+  // inline void
+  // distribute_local_to_global(const Tensor<2, dim>a &cell_tensor,
+  //                            const unsigned int cell_index,
+  //                            std::vector< std::vector<double> > &dst)
+  // {
+  //   dst[0][idx] = cell_tensor[0][0];
+  // }
+
+
+  template <int dim>
+  void
+  PhaseFieldSolver<dim>::
+  get_stresses(std::vector< Vector<double> > &dst)
+  {
+		AssertThrow(dst.size() == dim,
+						 		ExcDimensionMismatch(dst.size(), dim));
+
+    // for (unsigned int i=0; i<dim; ++i)
+    //   AssertThrow(dst[i].size() == triangulation.n_active_cells(),
+    //               ExcDimensionMismatch(dst[i].size(),
+    //                                    triangulation.n_active_cells()));
+
+
+    const QGauss<dim> quadrature_formula(fe.degree+2);
+    FEValues<dim> fe_values(fe, quadrature_formula,
+                            update_gradients);
+
+    const unsigned int n_q_points    = quadrature_formula.size();
+    const FEValuesExtractors::Vector displacement(0);
+
+    std::vector< Tensor<2, dim> > grad_u_values(n_q_points);
+    Tensor<2, dim> strain_tensor_value, stress_tensor_value, cell_stress_tensor;
+    ConstitutiveModel::EnergySpectralDecomposition<dim> stress_decomposition;
+
+    typename DoFHandler<dim>::active_cell_iterator
+      cell = dof_handler.begin_active(),
+      endc = dof_handler.end();
+
+    relevant_solution = solution;
+    unsigned int idx = 0;
+
+    for (; cell!=endc; ++cell)
+    {
+      // if (!cell->is_ghost())
+      // if (cell->is_locally_owned())
+      if (!cell->is_artificial())
+      {
+        fe_values.reinit(cell);
+        fe_values[displacement].get_function_gradients(relevant_solution,
+                                                       grad_u_values);
+        cell_stress_tensor = 0;
+        double E = data.get_young_modulus->value(cell->center(), 0);
+        double nu = data.get_poisson_ratio->value(cell->center(), 0);
+        double lame_constant = E*nu/((1.+nu)*(1.-2*nu));
+        double shear_modulus = 0.5*E/(1.+nu);
+
+        for (unsigned int q=0; q<n_q_points; ++q)
+        {
+          strain_tensor_value = 0.5*(grad_u_values[q] + transpose(grad_u_values[q]));
+          stress_decomposition.get_stress(strain_tensor_value, lame_constant,
+                                          shear_modulus, stress_tensor_value);
+          cell_stress_tensor += stress_tensor_value;
+        }
+
+        for (unsigned int d=0; d<dim; ++d)
+          dst[d][idx] = cell_stress_tensor[d][d];
+
+      } // end if not artificial
+
+      idx++;
+
+    }  // end cell loop
+  }  // eom
 
 }  // end of namespace

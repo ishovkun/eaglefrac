@@ -4,7 +4,7 @@ subsection Boundary conditions
   set Displacement boundary labels     = 2, 3, 1
   set Displacement boundary components = 1, 1, 0
   set Displacement boundary velocities = 0, 1, 0
-  set Displacement points = 
+  set Displacement points =
 end
 
 
@@ -18,16 +18,15 @@ subsection Equation data
   set Uniform Poisson ratio      = true
   set Uniform Young modulus      = true
   set Uniform fracture toughness = true
-  set Bitmap file                = 
-  set Bitmap range               = 
+  set Bitmap file                =
+  set Bitmap range               =
 end
 
 
 subsection Mesh
   set Initial global refinement steps = 4
-  set Local refinement steps          = 0
   set Local refinement region         = 0.4, 0.6, 0.4, 0.6
-  set Adaptive steps                  = 2  
+  set Adaptive steps                  = 2
   set Adaptive phi value              = 0.4
   set Mesh file                       = input/unit_slit.msh
 end

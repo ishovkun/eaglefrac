@@ -67,6 +67,7 @@ namespace EagleFrac
 		TrilinosWrappers::MPI::BlockVector pressure_relevant_solution;
 
 		std::vector< std::pair<double,std::string> > times_and_names;
+    std::vector< Vector<double> > stresses;
   };
 
 
@@ -231,6 +232,12 @@ namespace EagleFrac
 		pressure_owned_solution.reinit(owned_partitioning,
 																	 mpi_communicator);
 
+    // Setup container for stresses
+    if (stresses.size() != dim)
+      stresses.resize(dim);
+    for (int i=0; i<dim; ++i)
+			stresses[i].reinit(triangulation.n_active_cells());
+
   	computing_timer.exit_section();
 	} // eom
 
@@ -373,7 +380,6 @@ namespace EagleFrac
     double minimum_mesh_size = Mesher::compute_minimum_mesh_size(triangulation,
                                                                  mpi_communicator);
     const int max_refinement_level =
-        data.n_prerefinement_steps
       + data.initial_refinement_level
       + data.n_adaptive_steps;
 
@@ -381,24 +387,26 @@ namespace EagleFrac
     data.compute_mesh_dependent_parameters(minimum_mesh_size);
     pcout << "min mesh size " << minimum_mesh_size << std::endl;
 
-    // local prerefinement
+    // Global refinetement
     triangulation.refine_global(data.initial_refinement_level);
 		setup_dofs();
-		for (int ref_step=0; ref_step<data.n_prerefinement_steps; ++ref_step)
-		{
-			pcout << "Local_prerefinement" << std::endl;
-			Mesher::refine_region(triangulation,
-														data.local_prerefinement_region,
-														1);
-			setup_dofs();
-		}
+
+    // local prerefinement
+		for (int ref_step=0; ref_step<data.n_adaptive_steps; ++ref_step)
+      {
+        pcout << "Local_prerefinement" << std::endl;
+        Mesher::refine_region(triangulation,
+                              data.local_prerefinement_region,
+                              1);
+        setup_dofs();
+      }
 
 		// point phase_field_solver to pressure objects
   	const FEValuesExtractors::Scalar pressure_extractor(0);
-		phase_field_solver.decompose_stress = 1;
 		phase_field_solver.set_coupling(pressure_dof_handler,
 																	  pressure_fe,
 																		pressure_extractor);
+		phase_field_solver.decompose_stress = 2;
 
     // Initial values
 		VectorTools::interpolate
@@ -406,7 +414,8 @@ namespace EagleFrac
 			 InitialValues::Defects<dim>(data.defect_coordinates,
 																	  // idk why e/2, it just works better
 																	//  data.regularization_parameter_epsilon/2),
-																	 data.regularization_parameter_epsilon),
+																	 minimum_mesh_size),
+																	 // data.regularization_parameter_epsilon),
 			 phase_field_solver.solution);
 
     // phase_field_solver.solution.block(1) = 1;
@@ -435,6 +444,9 @@ namespace EagleFrac
             << std::endl;
 
 			double pressure_value = data.pressure_function.value(Point<1>(time));
+      // pcout << pressure_value << std::endl;
+      pressure_value = std::min(10e6, pressure_value);
+      // double pressure_value = 1e3;
 			pressure_owned_solution = pressure_value;
 			pressure_relevant_solution = pressure_owned_solution;
 
@@ -531,7 +543,7 @@ namespace EagleFrac
           goto redo_time_step;
         }
 
-      phase_field_solver.truncate_phase_field();
+      // phase_field_solver.truncate_phase_field();
       output_results(time_step_number, time);
       execute_postprocessing(time_step_number, time);
       // return;
@@ -643,11 +655,12 @@ namespace EagleFrac
 		data_out.add_data_vector(pressure_dof_handler,
 														 pressure_relevant_solution,
 														 "pressure");
-    // toughness
-		// fracture_toughness_relevant = fracture_toughness_owned;
-		// data_out.add_data_vector(pressure_dof_handler,
-		// 												 fracture_toughness_relevant,
-		// 												 "G_c");
+
+    // compute stresses
+    phase_field_solver.get_stresses(stresses);
+    data_out.add_data_vector(stresses[0], "sigma_xx");
+    data_out.add_data_vector(stresses[1], "sigma_yy");
+
     data_out.build_patches();
 
     int n_time_step_digits = 3,

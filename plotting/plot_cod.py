@@ -21,14 +21,15 @@ E_prime = E/(1.0-nu**2)
 cod_an = 2*p*l0/E_prime*(np.clip(1.0 - (x - 2.0)**2/l0**2, 0, 1))**0.5
 cod_an *= 2
 
-plt.plot(x, cod, "ko", label="numerical")
-plt.plot(x, cod_an, label="analytical")
-plt.xlabel("x (m)", fontsize=15)
-plt.ylabel("COD (m)", fontsize=15)
-plt.legend(frameon=False)
+fig = plt.figure(figsize=(10, 8))
+plt.plot(x, cod*1e3, "ko", label="numerical")
+plt.plot(x, cod_an*1e3, label="analytical")
+plt.xlabel("x (mm)", fontsize=20)
+plt.ylabel("COD (mm)", fontsize=20)
+plt.legend(frameon=False, fontsize=20)
 # plt.ylim(-1e-4, None)
 plt.xlim(1.5, 2.5)
 
-plt.subplots_adjust(left=0.2, right=0.95, top=0.98, bottom=0.15, hspace=0.25)
-plt.tick_params(labelsize=12)
+# plt.subplots_adjust(left=0.2, right=0.95, top=0.98, bottom=0.15, hspace=0.25)
+plt.tick_params(labelsize=20)
 plt.show()

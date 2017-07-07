@@ -3,24 +3,25 @@
 subsection Boundary conditions
   set Displacement boundary labels     = 0, 1, 2, 3
   set Displacement boundary components = 0, 0, 1, 1
-  set Displacement boundary velocities = 0, 0, 0, 0
+  set Displacement boundary velocities = 9e-5, -9e-5, 3e-5, -3e-5
+  #set Displacement boundary velocities = 0, 0, 0, 0
 end
 
 
 subsection Initial conditions
-  #              x1,  y1,  x2,  y2
-  set Defects = (0.4, 0.5, 0.6, 0.5)
+  #              x1,   y1,   x2,  y2
+  set Defects = (0.45, 0.5, 0.55, 0.5)
 end
 
 subsection Equation data
-  set Pressure                   = 1e3*time
+  set Pressure                   = 1e5*time
   set Fracture toughness         = 1
-  set Young modulus              = 210000
+  set Young modulus              = 7e9
   set Poisson ratio              = 0.3
-  set Biot coefficient           = 0.0
+  set Biot coefficient           = 0.5
   set Regularization epsilon     = 5, 1
   set Regularization kappa       = 1e-10
-  set Penalization c             = 1e3
+  set Penalization c             = 1e9
   set Uniform Poisson ratio      = true
   set Uniform Young modulus      = true
   set Uniform fracture toughness = true
@@ -31,19 +32,19 @@ end
 
 subsection Mesh
   set Initial global refinement steps = 3
-  set Local refinement steps          = 2
-  set Local refinement region         = 0.38, 0.48, 0.62, 0.52
-  set Adaptive steps                  = 2  
+  set Local refinement steps          = 0
+  set Local refinement region         = 0.4, 0.6, 0.45, 0.55
+  set Adaptive steps                  = 3  
   set Adaptive phi value              = 0.6
   set Mesh file                       = input/unit_square.msh
 end
 
 
 subsection Solver
-  set Time stepping table = (0, 1e-2);
-  set Max Newton steps  = 20
+  set Time stepping table = (0, 0.01);
+  set Max Newton steps  = 100
   set Minimum time step = 1e-9
-  set Newton tolerance  = 1e-9
+  set Newton tolerance  = 1e-7
   set T max             = 10
 end
 

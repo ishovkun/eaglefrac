@@ -72,12 +72,7 @@ namespace EagleFrac
 		// this object contains time records for output
 		// this allows having a real time value in Paraview
 		std::vector< std::pair<double,std::string> > times_and_names;
-
-		// FESystem<dim> pressure_fe;
-		// TrilinosWrappers::MPI::BlockVector pressure_owned_solution;
-		// TrilinosWrappers::MPI::BlockVector pressure_relevant_solution;
-		// TrilinosWrappers::MPI::BlockVector fracture_toughness_owned;
-		// TrilinosWrappers::MPI::BlockVector fracture_toughness_relevant;
+    std::vector< Vector<double> > stresses;
   };
 
 
@@ -242,6 +237,13 @@ namespace EagleFrac
 		phase_field_solver.setup_dofs();
 		pressure_solver.setup_dofs();
 
+    // Setup container for stresses
+    if (stresses.size() != dim)
+      stresses.resize(dim);
+    for (int i=0; i<dim; ++i)
+			stresses[i].reinit(triangulation.n_active_cells());
+
+    // Use when wells are located in cell  centers
 		// auto & pressure_dof_handler = pressure_solver.get_dof_handler();
 		// for (unsigned int w=0; w<data.wells.size(); ++w)
 		// 	data.wells[w]->locate(pressure_dof_handler, mpi_communicator);
@@ -279,6 +281,7 @@ namespace EagleFrac
 		phase_field_solver.set_coupling(pressure_dof_handler,
 																		pressure_fe,
 																		pressure_extractor);
+		phase_field_solver.decompose_stress = 2;
 
     prepare_output_directories();
 
@@ -325,13 +328,99 @@ namespace EagleFrac
 
 		phase_field_solver.old_solution = phase_field_solver.solution;
 		pressure_solver.solution = data.init_pressure;
+		pressure_solver.relevant_solution = pressure_solver.solution;
     // phase_field_solver.old_solution.block(1) = phase_field_solver.solution.block(1);
 
     double time = 0;
     double time_step = data.get_time_step(time);
     double old_time_step = time_step;
     int time_step_number = 0;
-		//
+
+    // { // RESERVOIR INITIALIZATION
+    //   // don't solve for pressure - only for displacement with fixed pressure
+    //   bool zero_pressure = true;
+    // redo_initialization:
+    //   pcout << std::endl << "Initializing reservoir" << std::endl;
+
+    //   IndexSet old_active_set(phase_field_solver.active_set);
+    //   phase_field_solver.use_old_time_step_phi = true;
+    //   std::pair<double,double> time_steps = std::make_pair(0, 0);
+    //   impose_displacement_on_solution();
+
+    //   print_header();
+    //   int pds_step = 0;  // solid system iteration number
+    //   const double newton_tolerance = data.newton_tolerance;
+    //   while (pds_step < data.max_newton_iter)
+    //   {
+    //     pcout << pds_step << "\t";
+
+    //     double error = std::numeric_limits<double>::max();
+    //     if (pds_step > 0)
+    //     {
+    //       // compute residual
+    //       phase_field_solver.assemble_coupled_system(phase_field_solver.solution,
+    //                                                   pressure_solver.relevant_solution,
+    //                                                   time_steps,
+    //                                                   /*include_pressure = */ true,
+    //                                                   /*assemble_matrix = */ false);
+    //       phase_field_solver.compute_active_set(phase_field_solver.solution);
+    //       phase_field_solver.all_constraints.set_zero(phase_field_solver.residual);
+    //       error = phase_field_solver.residual_norm();
+
+    //       // print active set and error
+    //       pcout << phase_field_solver.active_set_size() << "\t";
+    //       std::cout.precision(3);
+    //       pcout << std::scientific << error << "\t";
+    //       std::cout.unsetf(std::ios_base::scientific);
+
+    //       // break condition
+    //       if (phase_field_solver.active_set_changed(old_active_set) &&
+    //           error < newton_tolerance)
+    //       {
+    //         pcout << "PDS Converged!" << std::endl;
+    //         break;
+    //       }
+
+    //       old_active_set = phase_field_solver.active_set;
+    //     }  // end first newton step condition
+
+    //     std::pair<unsigned int, unsigned int> newton_step_results;
+    //     try
+    //     {
+    //       newton_step_results =
+    //         phase_field_solver.solve_coupled_newton_step
+    //           (pressure_solver.relevant_solution, time_steps);
+    //     }
+    //     catch (SolverControl::NoConvergence e)
+    //     {
+    //       computing_timer.exit_section();
+    //       pcout << "linear solver didn't converge!" << std::endl;
+    //       pcout << "Failed to initialize reservoir" << std::endl;
+    //       pcout << "Aborting." << std::endl;
+    //       return;
+    //     }
+    //     phase_field_solver.relevant_solution = phase_field_solver.solution;
+
+    //     pcout << newton_step_results.first << "\t";
+    //     pcout << newton_step_results.second << "\t";
+
+    //     pds_step++;
+
+    //     pcout << std::endl;
+    //   }  // End pds iter
+
+    //   if (zero_pressure)
+    //   {
+    //     zero_pressure = false;
+    //     phase_field_solver.update_old_solution();
+    //     goto redo_initialization;
+    //   }
+
+    //   output_results(time_step_number, time);
+    //   execute_postprocessing(time);
+    // } // end initialization
+
+    // TRANSIENT SIMULATION
     while(time < data.t_max)
     {
       time_step = data.get_time_step(time);
@@ -368,8 +457,6 @@ namespace EagleFrac
 
 			TrilinosWrappers::MPI::BlockVector pressure_old_iter =
 				pressure_solver.relevant_solution;
-			// TrilinosWrappers::MPI::BlockVector solid_tmp =
-			// 	phase_field_solver.relevant_solution;
 
 			double fss_error = std::numeric_limits<double>::max();
 			unsigned int fss_step = 0;
@@ -377,7 +464,6 @@ namespace EagleFrac
 			{
 				pcout << "-----------------------------------------------" << std::endl;
 				pcout << "FSS iteration " << fss_step << std::endl;
-				// if (time_step_number > 1 || fss_step > 0)
 
 				print_header();
 	      int pds_step = 0;  // solid system iteration number
@@ -766,6 +852,12 @@ namespace EagleFrac
 		data_out.add_data_vector(pressure_dof_handler,
 														 pressure_solver.relevant_solution,
 														 "pressure");
+
+    // Compute and add stresses
+    phase_field_solver.get_stresses(stresses);
+    data_out.add_data_vector(stresses[0], "sigma_xx");
+    data_out.add_data_vector(stresses[1], "sigma_yy");
+
     data_out.build_patches();
 
     int n_time_step_digits = 3,

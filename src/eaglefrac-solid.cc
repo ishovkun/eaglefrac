@@ -102,6 +102,9 @@ namespace EagleFrac
     for (int i=0; i<n_displacement_conditions; ++i)
       displacement_values[i] = data.displacement_boundary_velocities[i]*time;
 
+    // if (time >= 54)
+    //   displacement_values[0] = data.displacement_boundary_velocities[0]*54;
+
     int n_displacement_node_conditions = data.displacement_points.size();
     std::vector<double> displacement_point_values(n_displacement_node_conditions);
     for (int i=0; i<n_displacement_node_conditions; ++i)
@@ -124,12 +127,11 @@ namespace EagleFrac
   {
     phase_field_solver.setup_dofs();
 
+    // Setup container for stresses
     if (stresses.size() != dim)
       stresses.resize(dim);
-
     for (int i=0; i<dim; ++i)
 			stresses[i].reinit(triangulation.n_active_cells());
-      // stresses[i].reinit(triangulation.n_locally_owned_active_cells());
 
   }  // eom
 
@@ -254,7 +256,6 @@ namespace EagleFrac
       time_step_number++;
 
       phase_field_solver.update_old_solution();
-      std::pair<double,double> time_steps = std::make_pair(time_step, old_time_step);
 
     redo_time_step:
       pcout << std::endl
@@ -264,6 +265,16 @@ namespace EagleFrac
 						<< time_step
             << std::endl;
 
+      // double G_c = 31;
+      // double tcrit = 54;
+      // if (time >= tcrit)
+      //   {
+      //     G_c = 31. - 1*(time-tcrit);
+      //     phase_field_solver.use_old_time_step_phi = true;
+      //   }
+      // data.get_fracture_toughness = new ConstantFunction<dim>(G_c, 1);
+
+      std::pair<double,double> time_steps = std::make_pair(time_step, old_time_step);
     	impose_displacement_on_solution(time);
 
       IndexSet old_active_set(phase_field_solver.active_set);

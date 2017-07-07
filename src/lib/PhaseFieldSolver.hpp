@@ -524,9 +524,18 @@ assemble_coupled_system(const TrilinosWrappers::MPI::BlockVector &linerarization
         // we get nans at the first time step
         if (!numbers::is_finite(trace(stress_tensor_plus)))
 				{
-					stress_decomposition.get_stress(strain_tensor_value, lame_constant,
-							 													  shear_modulus, stress_tensor_plus);
-					stress_tensor_minus = 0;
+          if (decompose_stress > 0)
+            stress_decomposition.get_stress_decomposition(strain_tensor_value,
+                                                          lame_constant,
+                                                          shear_modulus,
+                                                          stress_tensor_plus,
+                                                          stress_tensor_minus);
+          else
+          {
+            stress_decomposition.get_stress(strain_tensor_value, lame_constant,
+                                            shear_modulus, stress_tensor_plus);
+            stress_tensor_minus = 0;
+          }
 				}
 
         double old_phi_value = old_phi_values[q];
@@ -1294,11 +1303,13 @@ unsigned int PhaseFieldSolver<dim>::solve()
 
     const QGauss<dim> quadrature_formula(fe.degree+2);
     FEValues<dim> fe_values(fe, quadrature_formula,
-                            update_gradients);
+                            update_values | update_gradients);
 
     const unsigned int n_q_points    = quadrature_formula.size();
     const FEValuesExtractors::Vector displacement(0);
+    const FEValuesExtractors::Scalar phase_field(dim);
 
+    std::vector<double> 					phi_values(n_q_points);
     std::vector< Tensor<2, dim> > grad_u_values(n_q_points);
     Tensor<2, dim> strain_tensor_value, stress_tensor_value, cell_stress_tensor;
     ConstitutiveModel::EnergySpectralDecomposition<dim> stress_decomposition;
@@ -1312,13 +1323,13 @@ unsigned int PhaseFieldSolver<dim>::solve()
 
     for (; cell!=endc; ++cell)
     {
-      // if (!cell->is_ghost())
-      // if (cell->is_locally_owned())
       if (!cell->is_artificial())
       {
         fe_values.reinit(cell);
         fe_values[displacement].get_function_gradients(relevant_solution,
                                                        grad_u_values);
+        fe_values[phase_field].get_function_values(relevant_solution,
+                                                   phi_values);
         cell_stress_tensor = 0;
         double E = data.get_young_modulus->value(cell->center(), 0);
         double nu = data.get_poisson_ratio->value(cell->center(), 0);
@@ -1330,7 +1341,7 @@ unsigned int PhaseFieldSolver<dim>::solve()
           strain_tensor_value = 0.5*(grad_u_values[q] + transpose(grad_u_values[q]));
           stress_decomposition.get_stress(strain_tensor_value, lame_constant,
                                           shear_modulus, stress_tensor_value);
-          cell_stress_tensor += stress_tensor_value;
+          cell_stress_tensor += phi_values[q]*stress_tensor_value;
         }
 
         for (unsigned int d=0; d<dim; ++d)

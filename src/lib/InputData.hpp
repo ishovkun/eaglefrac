@@ -75,7 +75,7 @@ namespace InputData {
 
   public:
     // BC's
-    std::vector<double> displacement_boundary_velocities;
+    std::vector<double>       displacement_boundary_velocities;
     std::vector< Point<dim> > displacement_points;
     std::vector<int>          displacement_point_components;
     std::vector<double>       displacement_point_velocities;
@@ -108,8 +108,8 @@ namespace InputData {
     void check_input();
 
 			// 	pressure_owned_solution = pressure_max_value;
-    ParameterHandler prm;
-		ConditionalOStream &pcout;
+    ParameterHandler   prm;
+		// ConditionalOStream &pcout;
 
 	protected:
     // Properties

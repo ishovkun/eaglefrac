@@ -200,6 +200,9 @@ namespace FluidSolvers
 
   	std::vector<types::global_dof_index> local_dof_indices(dofs_per_cell);
 
+    // Just checking how the source term function performs
+    double total_flux = 0;
+
 		system_matrix = 0;
 		rhs_vector = 0;
 
@@ -233,6 +236,9 @@ namespace FluidSolvers
 	      double E = data.get_young_modulus->value(cell_solid->center(), 0);
 				double nu = data.get_poisson_ratio->value(cell_solid->center(), 0);
 				double bulk_modulus = E/3.0/(1.0-2.0*nu);
+
+        // Compute cell size (to normalize source term)
+        const double cell_measure = cell->measure();
 
 				// reciprocal poroelastic modulus M
 				double recM =
@@ -293,7 +299,8 @@ namespace FluidSolvers
 
 					double source_term = 0;
 					for (unsigned int k=0; k<data.wells.size(); ++k)
-						source_term += data.wells[k]->value(quadrature_points[q], 0);
+						source_term += data.wells[k]->value(quadrature_points[q], 0)/
+                           cell_measure;
 
 					// if (source_term > 0)
 					// 	pcout << "source " << source_term << std::endl;
@@ -369,6 +376,7 @@ namespace FluidSolvers
 							;
 
 							local_rhs[i] += (xi_r*rhs_r + xi_f*rhs_f)*fe_values.JxW(q);
+              total_flux += source_term*fe_values.JxW(q);
 					}  // end i loop
 
 				}  // end q-point loop
@@ -383,6 +391,8 @@ namespace FluidSolvers
 
     system_matrix.compress(VectorOperation::add);
     rhs_vector.compress(VectorOperation::add);
+    total_flux = Utilities::MPI::sum(total_flux, mpi_communicator);
+    pcout << "Total flux " << total_flux << std::endl;
 		// pcout << "norm " << rhs_vector.l2_norm() << std::endl;
 
 		computing_timer.exit_section();

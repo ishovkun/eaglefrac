@@ -113,7 +113,8 @@ namespace FluidSolvers
 	PressureSolver<dim>::~PressureSolver()
 	{
   	dof_handler.clear();
-	}
+	}  // eom
+
 
 	template <int dim> void
 	PressureSolver<dim>::setup_dofs()

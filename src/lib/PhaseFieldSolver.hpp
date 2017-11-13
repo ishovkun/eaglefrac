@@ -160,6 +160,10 @@ private:
 	TrilinosWrappers::MPI::BlockVector rhs_vector;
 	ConstraintMatrix physical_constraints, all_constraints, hanging_nodes_constraints;
 	bool use_old_time_step_phi;
+  // How to dicompose stress
+  // No splitting: 0
+  // Simple splitting: 1
+  // Spectral decomposition: 2
 	int  decompose_stress;
 
 };
@@ -383,22 +387,36 @@ assemble_coupled_system(const TrilinosWrappers::MPI::BlockVector &linerarization
   else
     computing_timer.enter_section("Assemble nonlinear residual");
 
-  const QGauss<dim> quadrature_formula(fe.degree+2);
+  const QGauss<dim> quadrature_formula(fe.degree + 2);
+  const QGauss<dim-1> face_quadrature_formula(fe.degree + 1);
   FEValues<dim> fe_values(fe, quadrature_formula,
                           update_values | update_gradients |
                           update_quadrature_points |
                           update_JxW_values);
+  FEFaceValues<dim> fe_face_values(fe, face_quadrature_formula,
+                                   update_values | update_gradients |
+                                   update_normal_vectors |
+                                   update_JxW_values);
 
 	// dummy unless include_pressure=true
 	FEValues<dim> *p_pressure_fe_values = NULL;
+  FEFaceValues<dim> *p_pressure_fe_face_values = NULL;
 	if (include_pressure)
+  {
     p_pressure_fe_values = new FEValues<dim>(*p_pressure_fe, quadrature_formula,
 	                     											 update_values | update_gradients |
 																						 update_quadrature_points);
-  auto & pressure_fe_values	= (*p_pressure_fe_values);
+    p_pressure_fe_face_values = new FEFaceValues<dim>(*p_pressure_fe,
+                                                      face_quadrature_formula,
+                                                      update_values);
+  }
 
-  const unsigned int dofs_per_cell = fe.dofs_per_cell;
-  const unsigned int n_q_points    = quadrature_formula.size();
+  auto & pressure_fe_values	= (*p_pressure_fe_values);
+  // auto & pressure_fe_face_values	= (*p_pressure_fe_face_values);
+
+  const unsigned int dofs_per_cell   = fe.dofs_per_cell;
+  const unsigned int n_q_points      = quadrature_formula.size();
+  const unsigned int n_face_q_points = face_quadrature_formula.size();
 
   FullMatrix<double>   local_matrix(dofs_per_cell, dofs_per_cell);
   Vector<double>       local_rhs(dofs_per_cell);
@@ -416,14 +434,17 @@ assemble_coupled_system(const TrilinosWrappers::MPI::BlockVector &linerarization
   std::vector< Tensor<2,dim> >  eps_u(dofs_per_cell);
   // Solution values containers
   std::vector<double> 					phi_values(n_q_points),
+                                old_phi_face_values(n_face_q_points),
 						  									old_phi_values(n_q_points),
 						  									old_old_phi_values(n_q_points);
-  std::vector< Tensor<1, dim> > u_values(n_q_points);
+  std::vector< Tensor<1, dim> > u_values(n_q_points),
+                                u_face_values(n_face_q_points);
   std::vector< Tensor<2, dim> > grad_u_values(n_q_points);
   std::vector< Tensor<1,dim> >  grad_phi_values(n_q_points);
   Tensor<2, dim> 								strain_tensor_value;
   // Pressure solution containers
 	std::vector<double> 				  p_values(n_q_points);
+	std::vector<double> 				  p_face_values(n_face_q_points);
 	std::vector< Tensor<1,dim> >  grad_p_values(n_q_points);
 
   // Stress decomposition containers
@@ -696,6 +717,60 @@ assemble_coupled_system(const TrilinosWrappers::MPI::BlockVector &linerarization
             } // end i&j loop
       } // end q loop
 
+      // Integrate boundary terms
+      // if (include_pressure)
+      //   for (unsigned int f=0; f<GeometryInfo<dim>::faces_per_cell; ++f)
+      //     if (cell->face(f)->at_boundary())
+      //     {
+      //       fe_face_values.reinit(cell, f);
+      //       pressure_fe_face_values.reinit(pressure_cell, f);
+
+      //       fe_face_values[displacement].get_function_values
+      //         (relevant_solution, u_face_values);
+      //       fe_face_values[phase_field].get_function_values
+      //         (old_solution, old_phi_face_values);
+      //       pressure_fe_face_values[*p_pressure_extractor].get_function_values
+      //         (pressure_relevant_solution, p_face_values);
+
+      //       for (unsigned int q=0; q<n_face_q_points; ++q)
+      //       {
+      //         double phi_tilda = old_phi_face_values[q];
+      //         auto & normal_vector = fe_face_values.normal_vector(q);
+
+      //         for (unsigned int k=0; k<dofs_per_cell; ++k)
+      //         {
+      //           xi_phi[k] = fe_values[phase_field].value(k,q);
+      //           xi_u[k]   = fe_values[displacement].value(k,q);
+      //         }
+
+      //         for (unsigned int i=0; i<dofs_per_cell; ++i)
+      //         {
+      //           // const unsigned int component_i =
+      //           //   fe.system_to_component_index(i).first;
+
+      //           for (unsigned int j=0; j<dofs_per_cell; ++j)
+      //           {
+      //             local_matrix(i, j) +=
+      //               -2*phi_tilda*p_face_values[q]
+      //               *scalar_product(normal_vector, xi_u[j])
+      //               *xi_phi[i]
+      //               *fe_face_values.JxW(q);
+      //           }
+
+      //           local_rhs[i] -=
+      //             (
+      //              -phi_tilda*phi_tilda
+      //              *p_face_values[q]
+      //              *scalar_product(normal_vector, xi_u[i])
+      //              -
+      //              2*phi_tilda*p_face_values[q]
+      //              *scalar_product(normal_vector, u_face_values[q])
+      //              *xi_phi[i]
+      //              )*fe_face_values.JxW(q);
+      //         }  // end i loop
+      //       }  // end qudrature point loop
+      //     }  // end face loop
+
       cell->get_dof_indices(local_dof_indices);
 
       if (assemble_matrix)
@@ -725,6 +800,7 @@ assemble_coupled_system(const TrilinosWrappers::MPI::BlockVector &linerarization
     setup_preconditioners();
 
   delete p_pressure_fe_values;
+  delete p_pressure_fe_face_values;
 }  // eom
 
 template <int dim>

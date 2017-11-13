@@ -39,7 +39,7 @@ namespace EagleFrac
     void create_mesh();
     void read_mesh();
     void setup_dofs();
-    void impose_displacement_on_solution();
+    void impose_displacement_on_solution(const double mult = 1);
     void output_results(int time_step_number, double time); //const;
     void refine_mesh();
     void execute_postprocessing(const double time);
@@ -118,14 +118,14 @@ namespace EagleFrac
   }
 
   template <int dim>
-  void SinglePhaseModel<dim>::impose_displacement_on_solution()
+  void SinglePhaseModel<dim>::impose_displacement_on_solution(const double mult)
   {
 		// pcout << data.displacement_boundary_labels.size() << std::endl;
 		// pcout << data.displacement_boundary_values.size() << std::endl;
     int n_displacement_conditions = data.displacement_boundary_labels.size();
     std::vector<double> displacement_values(n_displacement_conditions);
     for (int i=0; i<n_displacement_conditions; ++i)
-      displacement_values[i] = data.displacement_boundary_values[i];
+      displacement_values[i] = data.displacement_boundary_values[i]*mult;
 
     std::vector<double> displacement_point_values(0);
     phase_field_solver.impose_displacement(data.displacement_boundary_labels,
@@ -331,94 +331,97 @@ namespace EagleFrac
 		pressure_solver.relevant_solution = pressure_solver.solution;
     // phase_field_solver.old_solution.block(1) = phase_field_solver.solution.block(1);
 
+    double current_pressure = 0;
     double time = 0;
     double time_step = data.get_time_step(time);
     double old_time_step = time_step;
     int time_step_number = 0;
+    const int n_init_iter = 5000;
+    for (int init_iter=0; init_iter<n_init_iter; init_iter++)
+    { // RESERVOIR INITIALIZATION
+      // don't solve for pressure - only for displacement with fixed pressure
+      double ppp = data.init_pressure/n_init_iter;
+      current_pressure += ppp;
+      pressure_solver.solution = current_pressure;
+      phase_field_solver.update_old_solution();
+      pressure_solver.relevant_solution = pressure_solver.solution;
+      pcout << std::endl << "Initializing reservoir" << std::endl;
+      pcout << "Current pressure "<<current_pressure << std::endl;
+      // pcout << std::endl << "init pressure "<<data.init_pressure << std::endl;
 
-    // { // RESERVOIR INITIALIZATION
-    //   // don't solve for pressure - only for displacement with fixed pressure
-    //   bool zero_pressure = true;
-    // redo_initialization:
-    //   pcout << std::endl << "Initializing reservoir" << std::endl;
+      IndexSet old_active_set(phase_field_solver.active_set);
+      phase_field_solver.use_old_time_step_phi = true;
+      std::pair<double,double> time_steps = std::make_pair(0, 0);
+      impose_displacement_on_solution();
 
-    //   IndexSet old_active_set(phase_field_solver.active_set);
-    //   phase_field_solver.use_old_time_step_phi = true;
-    //   std::pair<double,double> time_steps = std::make_pair(0, 0);
-    //   impose_displacement_on_solution();
+      print_header();
+      int pds_step = 0;  // solid system iteration number
+      const double newton_tolerance = data.newton_tolerance;
+      while (pds_step < data.max_newton_iter)
+      {
+        pcout << pds_step << "\t";
 
-    //   print_header();
-    //   int pds_step = 0;  // solid system iteration number
-    //   const double newton_tolerance = data.newton_tolerance;
-    //   while (pds_step < data.max_newton_iter)
-    //   {
-    //     pcout << pds_step << "\t";
+        double error = std::numeric_limits<double>::max();
+        if (pds_step > 0)
+        {
+          // compute residual
+          phase_field_solver.assemble_coupled_system(phase_field_solver.solution,
+                                                      pressure_solver.relevant_solution,
+                                                      time_steps,
+                                                      /*include_pressure = */ true,
+                                                      /*assemble_matrix = */ false);
+          phase_field_solver.compute_active_set(phase_field_solver.solution);
+          phase_field_solver.all_constraints.set_zero(phase_field_solver.residual);
+          error = phase_field_solver.residual_norm();
 
-    //     double error = std::numeric_limits<double>::max();
-    //     if (pds_step > 0)
-    //     {
-    //       // compute residual
-    //       phase_field_solver.assemble_coupled_system(phase_field_solver.solution,
-    //                                                   pressure_solver.relevant_solution,
-    //                                                   time_steps,
-    //                                                   /*include_pressure = */ true,
-    //                                                   /*assemble_matrix = */ false);
-    //       phase_field_solver.compute_active_set(phase_field_solver.solution);
-    //       phase_field_solver.all_constraints.set_zero(phase_field_solver.residual);
-    //       error = phase_field_solver.residual_norm();
+          // print active set and error
+          pcout << phase_field_solver.active_set_size() << "\t";
+          std::cout.precision(3);
+          pcout << std::scientific << error << "\t";
+          std::cout.unsetf(std::ios_base::scientific);
 
-    //       // print active set and error
-    //       pcout << phase_field_solver.active_set_size() << "\t";
-    //       std::cout.precision(3);
-    //       pcout << std::scientific << error << "\t";
-    //       std::cout.unsetf(std::ios_base::scientific);
+          // break condition
+          if (phase_field_solver.active_set_changed(old_active_set) &&
+              error < newton_tolerance)
+          {
+            pcout << "PDS Converged!" << std::endl;
+            break;
+          }
 
-    //       // break condition
-    //       if (phase_field_solver.active_set_changed(old_active_set) &&
-    //           error < newton_tolerance)
-    //       {
-    //         pcout << "PDS Converged!" << std::endl;
-    //         break;
-    //       }
+          old_active_set = phase_field_solver.active_set;
+        }  // end first newton step condition
 
-    //       old_active_set = phase_field_solver.active_set;
-    //     }  // end first newton step condition
+        std::pair<unsigned int, unsigned int> newton_step_results;
+        try
+        {
+          newton_step_results =
+            phase_field_solver.solve_coupled_newton_step
+              (pressure_solver.relevant_solution, time_steps);
+        }
+        catch (SolverControl::NoConvergence e)
+        {
+          computing_timer.exit_section();
+          pcout << "linear solver didn't converge!" << std::endl;
+          pcout << "Failed to initialize reservoir" << std::endl;
+          pcout << "Aborting." << std::endl;
+          return;
+        }
+        phase_field_solver.relevant_solution = phase_field_solver.solution;
 
-    //     std::pair<unsigned int, unsigned int> newton_step_results;
-    //     try
-    //     {
-    //       newton_step_results =
-    //         phase_field_solver.solve_coupled_newton_step
-    //           (pressure_solver.relevant_solution, time_steps);
-    //     }
-    //     catch (SolverControl::NoConvergence e)
-    //     {
-    //       computing_timer.exit_section();
-    //       pcout << "linear solver didn't converge!" << std::endl;
-    //       pcout << "Failed to initialize reservoir" << std::endl;
-    //       pcout << "Aborting." << std::endl;
-    //       return;
-    //     }
-    //     phase_field_solver.relevant_solution = phase_field_solver.solution;
+        pcout << newton_step_results.first << "\t";
+        pcout << newton_step_results.second << "\t";
 
-    //     pcout << newton_step_results.first << "\t";
-    //     pcout << newton_step_results.second << "\t";
+        pds_step++;
 
-    //     pds_step++;
+        pcout << std::endl;
+      }  // End pds iter
 
-    //     pcout << std::endl;
-    //   }  // End pds iter
+      output_results(init_iter, time + init_iter);
+      // execute_postprocessing(time);
+    } // end initialization
 
-    //   if (zero_pressure)
-    //   {
-    //     zero_pressure = false;
-    //     phase_field_solver.update_old_solution();
-    //     goto redo_initialization;
-    //   }
-
-    //   output_results(time_step_number, time);
-    //   execute_postprocessing(time);
-    // } // end initialization
+    return;
+    // output_results(time_step_number, time);
 
     // TRANSIENT SIMULATION
     while(time < data.t_max)

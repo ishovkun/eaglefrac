@@ -109,7 +109,7 @@ namespace InputData {
 
 			// 	pressure_owned_solution = pressure_max_value;
     ParameterHandler   prm;
-		// ConditionalOStream &pcout;
+		ConditionalOStream &pcout;
 
 	protected:
     // Properties

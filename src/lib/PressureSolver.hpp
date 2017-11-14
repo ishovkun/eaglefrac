@@ -38,12 +38,12 @@ namespace FluidSolvers
 	{
 	public:
 		PressureSolver(MPI_Comm                                  &mpi_communicator_,
-                 	 parallel::distributed::Triangulation<dim> &triangulation_,
-                 	 const InputData::SinglePhaseData<dim>     &data_,
-									 const DoFHandler<dim>                     &dof_handler_solid_,
-									 const FESystem<dim>                       &fe_solid_,
+                   parallel::distributed::Triangulation<dim> &triangulation_,
+                   const InputData::SinglePhaseData<dim>     &data_,
+                   const DoFHandler<dim>                     &dof_handler_solid_,
+                   const FESystem<dim>                       &fe_solid_,
                    ConditionalOStream                        &pcout_,
-                 	 TimerOutput                               &computing_timer_);
+                   TimerOutput                               &computing_timer_);
 		~PressureSolver();
 		void setup_dofs();
 		void assemble_system(const TrilinosWrappers::MPI::BlockVector &solution_solid,
@@ -166,7 +166,7 @@ namespace FluidSolvers
 									const TrilinosWrappers::MPI::BlockVector &old_solution_solid,
 									const double                       time_step)
 	{
-    computing_timer.enter_section("Assmeble pressure system");
+    computing_timer.enter_section("Assemble pressure system");
 
   	const QGauss<dim> quadrature_formula(fe.degree+2);
   	FEValues<dim> fe_values(fe, quadrature_formula,
@@ -336,7 +336,7 @@ namespace FluidSolvers
 								;
 
 							double m_f =
-								data.fracture_compressibility *
+								data.fluid_compressibility *
 								xi_p[j]/time_step*xi_p[i]
 								+
 								K_eff*grad_xi_p[j]*grad_xi_p[i]
@@ -365,7 +365,7 @@ namespace FluidSolvers
 							;
 
 						double rhs_f =
-							data.fracture_compressibility *
+							data.fluid_compressibility *
 							old_p_values[q]/time_step*xi_p[i]
 							// +
 							// Keff *

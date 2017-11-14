@@ -17,6 +17,7 @@ ADD_LIBRARY(lib
   Scheduler.hpp
   Parsers.hpp
   TemperatureSolver.hpp
+  FEFunction.hpp
 )
 
 DEAL_II_SETUP_TARGET(lib)

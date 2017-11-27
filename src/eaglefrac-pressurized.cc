@@ -556,7 +556,8 @@ namespace EagleFrac
 					phase_field_solver.solution;
         width_solver.compute_level_set(phase_field_solver.relevant_solution);
         width_solver.assemble_system(phase_field_solver.relevant_solution);
-        width_solver.solve_system();
+        unsigned int n_solver_steps = width_solver.solve_system();
+        pcout << "Width Solver: " << n_solver_steps << " steps" << std::endl;
         width_solver.relevant_solution = width_solver.solution;
       }
 

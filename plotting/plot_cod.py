@@ -1,5 +1,6 @@
 import numpy as np
 import matplotlib.pyplot as plt
+import pandas as pd
 
 # inch = 2.54*1e-2
 # sin = np.sin
@@ -10,6 +11,9 @@ data = np.loadtxt("../pressurized-sneddon/cod-1.txt")
 x = data[:, 0]
 cod = data[:, 1]
 
+data_fe = pd.read_csv("../pressurized-sneddon/line_plots/width_line_plot.csv")
+w = data_fe['width'].values
+arc_l = data_fe['arc_length'].values
 
 # analytical solution (Sneddon)
 E = 1
@@ -22,9 +26,10 @@ cod_an = 2*p*l0/E_prime*(np.clip(1.0 - (x - 2.0)**2/l0**2, 0, 1))**0.5
 cod_an *= 2
 
 fig = plt.figure(figsize=(10, 8))
-plt.plot(x, cod*1e3, "ko", label="numerical")
+plt.plot(x, cod*1e3, "ko", label="explicit integraion")
 plt.plot(x, cod_an*1e3, label="analytical")
-plt.xlabel("x (mm)", fontsize=20)
+plt.plot(arc_l, w*1e3, "ro", label="solver")
+plt.xlabel("x (m)", fontsize=20)
 plt.ylabel("COD (mm)", fontsize=20)
 plt.legend(frameon=False, fontsize=20)
 # plt.ylim(-1e-4, None)

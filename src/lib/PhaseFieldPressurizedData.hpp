@@ -36,7 +36,7 @@ namespace InputData
 	PhaseFieldPressurizedData(ConditionalOStream &pcout_)
 	:
 	// PhaseFieldSolidData<dim>(pcout_),
-  SinglePhaseData<dim>(pcout_),
+    SinglePhaseData<dim>(pcout_),
 	pressure_function(1)
 	{
 		declare_parameters();
@@ -268,6 +268,10 @@ namespace InputData
 	    this->minimum_time_step = this->prm.get_double("Minimum time step");
 	    this->newton_tolerance = this->prm.get_double("Newton tolerance");
 	    this->max_newton_iter = this->prm.get_integer("Max Newton steps");
+      this->constant_level_set = this->prm.get_double("Level set constant");
+      AssertThrow(this->constant_level_set < this->phi_refinement_value,
+                  ExcMessage("Level set constant should be > phi refinement constant"));
+      this->penalty_theta = this->prm.get_integer("Penalty theta");
 	    this->prm.leave_subsection();
 	  }
 	  { // Postprocessing

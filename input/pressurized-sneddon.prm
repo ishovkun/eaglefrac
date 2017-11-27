@@ -30,6 +30,7 @@ end
 
 
 subsection Mesh
+  set Level set constant = 0.2
   set Initial global refinement steps = 4
   set Local refinement region         = 1.7, 2.3, 1.96, 2.04
   set Adaptive steps                  = 6

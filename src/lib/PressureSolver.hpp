@@ -3,7 +3,7 @@
 #include <deal.II/base/utilities.h>
 #include <deal.II/base/quadrature_lib.h>
 #include <deal.II/base/timer.h>
-// #include <deal.II/base/function.h>
+#include <deal.II/base/function.h>
 // #include <deal.II/base/tensor.h>
 
 // Trilinos stuff
@@ -52,7 +52,7 @@ namespace FluidSolvers
 		const DoFHandler<dim> &get_dof_handler();
 		const FESystem<dim>   &get_fe();
 		const ConstraintMatrix &get_constraint_matrix();
-		double solve();
+		unsigned int solve();
 		double 	solution_increment_norm(
 			const TrilinosWrappers::MPI::BlockVector &linearization_point_relevant,
 			const TrilinosWrappers::MPI::BlockVector &old_iter_solution_relevant);
@@ -133,9 +133,23 @@ namespace FluidSolvers
 
 		{ // Constraints
 			// only hanging nodes
+      ConstraintMatrix hanging_node_constraints;
+      hanging_node_constraints.clear();
+      hanging_node_constraints.reinit(locally_relevant_dofs);
+	    DoFTools::make_hanging_node_constraints(dof_handler,
+                                              hanging_node_constraints);
+      hanging_node_constraints.close();
+      // make constant pressure boundary conditions
 			constraints.clear();
 			constraints.reinit(locally_relevant_dofs);
-	    DoFTools::make_hanging_node_constraints(dof_handler, constraints);
+      constraints.merge(hanging_node_constraints);
+      const FEValuesExtractors::Scalar pressure_mask(0);
+      const auto & boundary_ids = triangulation.get_boundary_ids();
+      for (unsigned int i=0; i<boundary_ids.size(); i++)
+        VectorTools::interpolate_boundary_values
+          (dof_handler, boundary_ids[i],
+           ConstantFunction<dim>(data.init_pressure, 1),
+           constraints, fe.component_mask(pressure_mask));
     	constraints.close();
 		}
 
@@ -202,10 +216,12 @@ namespace FluidSolvers
   	std::vector<types::global_dof_index> local_dof_indices(dofs_per_cell);
 
     // Just checking how the source term function performs
-    double total_flux = 0;
+    // double total_flux = 0;
 
 		system_matrix = 0;
 		rhs_vector = 0;
+
+    double test_flow_rate = 0.0;
 
 	  typename DoFHandler<dim>::active_cell_iterator
 		  cell = dof_handler.begin_active(),
@@ -231,15 +247,11 @@ namespace FluidSolvers
 	      fe_values[pressure].get_function_values(relevant_solution, p_values);
 	      fe_values[pressure].get_function_values(old_solution, old_p_values);
 
-				auto & quadrature_points = fe_values.get_quadrature_points();
 
 				// compute poroelastic coefficients
 	      double E = data.get_young_modulus->value(cell_solid->center(), 0);
 				double nu = data.get_poisson_ratio->value(cell_solid->center(), 0);
 				double bulk_modulus = E/3.0/(1.0-2.0*nu);
-
-        // Compute cell size (to normalize source term)
-        const double cell_measure = cell->measure();
 
 				// reciprocal poroelastic modulus M
 				double recM =
@@ -257,17 +269,22 @@ namespace FluidSolvers
 				// this works good for 2D
         double beta = 0.25*data.biot_coef*data.biot_coef/bulk_modulus;
 
-				// double source_term = 0;
-				// for (unsigned int k=0; k<data.wells.size(); ++k)
-				// 	source_term += data.wells[k]->value(cell->center(), 0);
-
-				// pcout << std::endl;
-				// pcout << "poro " << data.porosity << std::endl;
+        // double source_term = 0;
+        // for (unsigned int k=0; k<data.wells.size(); ++k)
+        //   source_term += data.wells[k]->value(cell->center(), 0) /
+        //     cell->measure(); // / dofs_per_cell;
+        const auto & q_points = fe_values.get_quadrature_points();
 
 				for (unsigned int q=0; q<n_q_points; ++q)
 				{
+          // Wellbore
+          double source_term = 0;
+          for (unsigned int k=0; k<data.wells.size(); ++k)
+            source_term += data.wells[k]->value(q_points[q], 0);
+          //
+          test_flow_rate += source_term*fe_values.JxW(q);
 					// values that separate fracture, reservoir, and cake zone
-					double cx = 0.1;
+					double cx = 0.2;
 					double c1 = 0.5 - cx;
 					double c2 = 0.5 + cx;
 					// Indicator functions
@@ -286,22 +303,18 @@ namespace FluidSolvers
 
 					// compute perm
 					// this is a simplistic way to compute frac width but is good for now
-					double w = u_values[q].norm();  // absolute value
+					double w = 2*u_values[q].norm();  // absolute value
 					double perm_f = 1.0/12.0*w*w;   // fracture perm from lubrication theory
 					// perm_f = 10*data.perm_res;
 					// perm_f = 1e-11;
-					perm_f = std::max(1e-12, perm_f);
+					// perm_f = std::max(1e3*data.perm_res, perm_f);
+					perm_f = std::max(1e-11, perm_f);
 
 					// interpolate pereability
 					double K_eff =
 						(data.perm_res + xi_f*(perm_f - data.perm_res))/data.fluid_viscosity;
 
-					K_eff = std::max(data.perm_res/data.fluid_viscosity, K_eff);
-
-					double source_term = 0;
-					for (unsigned int k=0; k<data.wells.size(); ++k)
-						source_term += data.wells[k]->value(quadrature_points[q], 0)/
-                           cell_measure;
+					// K_eff = std::max(data.perm_res/data.fluid_viscosity, K_eff);
 
 					// if (source_term > 0)
 					// 	pcout << "source " << source_term << std::endl;
@@ -377,9 +390,7 @@ namespace FluidSolvers
 							;
 
 							local_rhs[i] += (xi_r*rhs_r + xi_f*rhs_f)*fe_values.JxW(q);
-              total_flux += source_term*fe_values.JxW(q);
 					}  // end i loop
-
 				}  // end q-point loop
 
 	      cell->get_dof_indices(local_dof_indices);
@@ -392,8 +403,9 @@ namespace FluidSolvers
 
     system_matrix.compress(VectorOperation::add);
     rhs_vector.compress(VectorOperation::add);
-    total_flux = Utilities::MPI::sum(total_flux, mpi_communicator);
-    pcout << "Total flux " << total_flux << std::endl;
+    // Just checking
+    test_flow_rate = Utilities::MPI::sum(test_flow_rate, mpi_communicator);
+    // pcout << "Total flux " << test_flow_rate << std::endl;
 		// pcout << "norm " << rhs_vector.l2_norm() << std::endl;
 
 		computing_timer.exit_section();
@@ -422,12 +434,12 @@ namespace FluidSolvers
 	}
 
 
-	template <int dim> double
+	template <int dim> unsigned int
 	PressureSolver<dim>::solve()
 	{
   	computing_timer.enter_section("Solve pressure system");
   	const unsigned int max_iter = system_matrix.m();
-		const double tol = 1e-10*rhs_vector.l2_norm();
+		const double tol = 1e-10 + 1e-10*rhs_vector.l2_norm();
 		SolverControl solver_control(max_iter, tol);
 		TrilinosWrappers::SolverCG solver(solver_control);
 

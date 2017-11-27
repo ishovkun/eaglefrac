@@ -1,5 +1,7 @@
 #pragma once
 
+#include<cmath>
+
 namespace RHS
 {
 	using namespace dealii;
@@ -37,7 +39,7 @@ namespace RHS
 
 		// set_control(const double value, const int control);
 		void locate(const DoFHandler<dim>  &dof_handler,
-								MPI_Comm 				 &mpi_communicator);
+								MPI_Comm 				       &mpi_communicator);
 
 		void set_control(const WellControl &control);
 
@@ -48,6 +50,8 @@ namespace RHS
 			double 					 flow_rate;
 			Point<dim>       closest_cell_center;
 			double					 location_radius;
+      bool             located;
+      const double     PI  = 3.141592653589793238463;
 	};  //  end of class definition
 
 
@@ -55,12 +59,13 @@ namespace RHS
 	Well<dim>::Well(const Point<dim> &loc,
 			 				 	 	const double		 rate,
 									double           location_radius_)
-  :
-	Function<dim>(1),
-	true_location(loc),
-	flow_rate(rate),
-	closest_cell_center(loc),
-	location_radius(location_radius_)
+    :
+    Function<dim>(1),
+    true_location(loc),
+    flow_rate(rate),
+    closest_cell_center(loc),
+    location_radius(location_radius_),
+    located(false)
 	{
 	}  // eom
 
@@ -134,6 +139,7 @@ namespace RHS
 							<< closest_cell_center
 							<< ")"
 							<< std::endl;
+    located = true;
 			// std::cout << "loc " << loc << std::endl;
 	}  // eom
 
@@ -144,13 +150,21 @@ namespace RHS
   {
 		if (component == 0)
 		{
-			// std::cout << "point " << p << std::endl;
-			// std::cout << "rate " << flow_rate << std::endl;
-			// std::cout << "best_cell " << p << std::endl;
-			if (closest_cell_center.distance(p) < location_radius)
-				return flow_rate;
-			else
-				return 0.0;
+      if (located)
+      {
+        if (closest_cell_center.distance(p) < location_radius)
+          return flow_rate;
+        else
+          return 0.0;
+      }
+      else
+      {
+        // This is a gaussian source
+        // intensity of gauss spot
+        const double I = 2*flow_rate/(PI*location_radius*location_radius);
+        const double r = true_location.distance(p);
+        return I*std::exp(-2.0*r*r/(location_radius*location_radius));
+      }
 		}
 		else
 			return 0.0;

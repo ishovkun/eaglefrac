@@ -24,16 +24,15 @@ subsection Equation data
   set Uniform Poisson ratio      = true
   set Uniform Young modulus      = true
   set Uniform fracture toughness = true
-  set Bitmap file                = 
-  set Bitmap range               = 
+  set Bitmap file                =
+  set Bitmap range               =
 end
 
 
 subsection Mesh
   set Initial global refinement steps = 4
-  set Local refinement steps          = 8
-  set Local refinement region         = 1.7, 2.3, 1.98, 2.02
-  set Adaptive steps                  = 0
+  set Local refinement region         = 1.7, 2.3, 1.96, 2.04
+  set Adaptive steps                  = 6
   set Adaptive phi value              = 0.9
   set Mesh file                       = input/4x4.msh
 end

@@ -158,7 +158,8 @@ private:
 	                                   relevant_solution;
 	TrilinosWrappers::MPI::BlockVector owned_storage_vector;
 	TrilinosWrappers::MPI::BlockVector rhs_vector;
-	ConstraintMatrix physical_constraints, all_constraints, hanging_nodes_constraints;
+	ConstraintMatrix physical_constraints, all_constraints,
+                   hanging_nodes_constraints;
 	bool use_old_time_step_phi;
   // How to dicompose stress
   // No splitting: 0
@@ -894,7 +895,6 @@ compute_active_set(TrilinosWrappers::MPI::BlockVector &linerarization_point)
   all_constraints.reinit(locally_relevant_dofs);
 
   std::vector<bool> dof_touched(dof_handler.n_dofs(), false);
-
   const unsigned int dofs_per_cell = fe.dofs_per_cell;
   std::vector<types::global_dof_index> local_dof_indices(dofs_per_cell);
 

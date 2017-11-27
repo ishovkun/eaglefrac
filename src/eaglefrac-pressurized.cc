@@ -14,6 +14,7 @@
 
 // Custom modules
 #include <PhaseFieldSolver.hpp>
+#include <WidthSolver.hpp>
 #include <Postprocessing.hpp>
 #include <PhaseFieldPressurizedData.hpp>
 #include <InitialValues.hpp>
@@ -58,9 +59,10 @@ namespace EagleFrac
     ConditionalOStream pcout;
     TimerOutput computing_timer;
 
-    // InputData::PhaseFieldSolidData<dim> data;
     InputData::PhaseFieldPressurizedData<dim> data;
+
     PhaseField::PhaseFieldSolver<dim> phase_field_solver;
+    PhaseField::WidthSolver<dim>      width_solver;
     std::string input_file_name, case_name;
 
 		TrilinosWrappers::MPI::BlockVector pressure_owned_solution;
@@ -91,6 +93,11 @@ namespace EagleFrac
     phase_field_solver(mpi_communicator,
                        triangulation, data,
                        pcout, computing_timer),
+    width_solver(mpi_communicator,
+                 triangulation,
+                 data,
+                 phase_field_solver.dof_handler,
+                 pcout, computing_timer),
     input_file_name(input_file_name_)
   {}
 
@@ -213,6 +220,7 @@ namespace EagleFrac
 		computing_timer.enter_section("Setup full system");
 		// Setup phase-field system
 		phase_field_solver.setup_dofs();
+    width_solver.setup_dofs();
 
 		// setup pressure vectors
 		pressure_dof_handler.distribute_dofs(pressure_fe);
@@ -342,9 +350,8 @@ namespace EagleFrac
 			{
 				// local_pressure_vector = 0;
 				phi_fe_values.reinit(phi_cell);
-				phi_fe_values[phase_field].
-						get_function_values(phase_field_solver.relevant_solution,
-																phi_values);
+				phi_fe_values[phase_field].get_function_values
+          (phase_field_solver.relevant_solution, phi_values);
 
 				double mean_phi_value = 0;
 				for (unsigned int q=0; q<n_q_points; ++q)
@@ -371,6 +378,7 @@ namespace EagleFrac
   {
     data.read_input_file(input_file_name);
     read_mesh();
+    data.print_parameters();
 
     // debug input
     // return;
@@ -414,7 +422,7 @@ namespace EagleFrac
 			 InitialValues::Defects<dim>(data.defect_coordinates,
 																	  // idk why e/2, it just works better
 																	//  data.regularization_parameter_epsilon/2),
-																	 minimum_mesh_size),
+																	 2*minimum_mesh_size),
 																	 // data.regularization_parameter_epsilon),
 			 phase_field_solver.solution);
 
@@ -543,6 +551,15 @@ namespace EagleFrac
           goto redo_time_step;
         }
 
+      { // Solve for width
+				phase_field_solver.relevant_solution =
+					phase_field_solver.solution;
+        width_solver.compute_level_set(phase_field_solver.relevant_solution);
+        width_solver.assemble_system(phase_field_solver.relevant_solution);
+        width_solver.solve_system();
+        width_solver.relevant_solution = width_solver.solution;
+      }
+
       // phase_field_solver.truncate_phase_field();
       output_results(time_step_number, time);
       execute_postprocessing(time_step_number, time);
@@ -661,6 +678,13 @@ namespace EagleFrac
     data_out.add_data_vector(stresses[0], "sigma_xx");
     data_out.add_data_vector(stresses[1], "sigma_yy");
 
+    // Add width
+		auto & width_dof_handler = width_solver.get_dof_handler();
+		data_out.add_data_vector(width_dof_handler,
+														 width_solver.relevant_solution,
+														 "width");
+    data_out.add_data_vector(width_solver.material_ids, "ID");
+
     data_out.build_patches();
 
     int n_time_step_digits = 3,
@@ -723,7 +747,7 @@ std::string parse_command_line(int argc, char *const *argv) {
 
   int arg_number = 1;
   while (args.size()){
-    std::cout << args.front() << std::endl;
+    // std::cout << args.front() << std::endl;
     if (arg_number == 1)
       filename = args.front();
     args.pop_front();

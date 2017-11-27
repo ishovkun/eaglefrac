@@ -1,7 +1,8 @@
 #pragma once
 #include <deal.II/base/function_parser.h>
 
-#include <InputData.hpp>
+// #include <InputData.hpp>
+#include <SinglePhaseData.hpp>
 
 namespace InputData
 {
@@ -9,7 +10,8 @@ namespace InputData
 
 
 	template <int dim>
-	class PhaseFieldPressurizedData : public PhaseFieldSolidData<dim>
+	// class PhaseFieldPressurizedData : public PhaseFieldSolidData<dim>
+	class PhaseFieldPressurizedData : public SinglePhaseData<dim>
 	{
 	public:
 		PhaseFieldPressurizedData(ConditionalOStream &pcout_);
@@ -33,7 +35,8 @@ namespace InputData
 	PhaseFieldPressurizedData<dim>::
 	PhaseFieldPressurizedData(ConditionalOStream &pcout_)
 	:
-	PhaseFieldSolidData<dim>(pcout_),
+	// PhaseFieldSolidData<dim>(pcout_),
+  SinglePhaseData<dim>(pcout_),
 	pressure_function(1)
 	{
 		declare_parameters();
@@ -107,6 +110,8 @@ namespace InputData
       this->prm.declare_entry("Minimum time step", "1e-9", Patterns::Double());
       this->prm.declare_entry("Newton tolerance", "1e-9", Patterns::Double());
       this->prm.declare_entry("Max Newton steps", "20", Patterns::Integer());
+      this->prm.declare_entry("Level set constant", "0.1", Patterns::Double());
+      this->prm.declare_entry("Penalty theta", "1000", Patterns::Double());
       this->prm.leave_subsection();
     }
     {

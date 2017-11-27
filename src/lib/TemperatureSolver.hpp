@@ -136,8 +136,9 @@ namespace FluidSolvers
      */
     const unsigned int dofs_per_cell = fe.dofs_per_cell;
     const unsigned int dofs_per_cell_solid = fe_solid.dofs_per_cell;
-    std::vector<types::global_dof_index> local_dof_indices(dofs_per_cell);
-    std::vector<types::global_dof_index> local_dof_indices_solid(dofs_per_cell);
+    std::vector<types::global_dof_index>
+      local_dof_indices(dofs_per_cell),
+      local_dof_indices_solid(dofs_per_cell_solid);
 
     const double phi_threshold = 0.1;
 
@@ -168,7 +169,7 @@ namespace FluidSolvers
         for (unsigned int i=0; i<dofs_per_cell; ++i)
         {
           const unsigned int index = local_dof_indices[i];
-          if (phi_avg > phi_threshold)
+          if (phi_avg < phi_threshold)
             solution[index] = 1.0;
         }
       }  // end cell loop
@@ -184,7 +185,8 @@ namespace FluidSolvers
   {
   	computing_timer.enter_section("Solve temperature system");
   	const unsigned int max_iter = system_matrix.m();
-		const double tol = 1e-10*rhs_vector.l2_norm();
+		const double tol = 1e-10 + 1e-10*rhs_vector.l2_norm();
+    // pcout << "RHS norm!!! " << tol << std::endl;
 		SolverControl solver_control(max_iter, tol);
 		TrilinosWrappers::SolverCG solver(solver_control);
 
@@ -234,7 +236,7 @@ namespace FluidSolvers
 		system_matrix = 0;
 		rhs_vector = 0;
 
-    const double diffusivity = 1e-6;
+    const double diffusivity = 1;
 
 	  typename DoFHandler<dim>::active_cell_iterator
 		  cell = dof_handler.begin_active(),
@@ -248,8 +250,8 @@ namespace FluidSolvers
 
 				fe_values.reinit(cell);
 
-        fe_values[temperature].get_function_values(relevant_solution, temp_values);
-
+        fe_values[temperature].get_function_values(relevant_solution,
+                                                   temp_values);
 
 				for (unsigned int q=0; q<n_q_points; ++q)
         {
@@ -272,6 +274,9 @@ namespace FluidSolvers
         }  // end q point loop
 
 	      cell->get_dof_indices(local_dof_indices);
+	      constraints.distribute_local_to_global(local_matrix, local_rhs,
+	                                             local_dof_indices,
+	                                             system_matrix, rhs_vector);
       }  // end cell loop
 
     system_matrix.compress(VectorOperation::add);

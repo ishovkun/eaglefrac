@@ -72,6 +72,7 @@ namespace InputData {
     void compute_mesh_dependent_parameters(double);
     void read_input_file(std::string);
     double get_time_step(const double);
+    void print_parameters();
 
   public:
     // BC's
@@ -130,6 +131,14 @@ namespace InputData {
     declare_parameters();
   }  // EOM
 
+
+  template <int dim>
+  void
+  PhaseFieldSolidData<dim>::print_parameters()
+  {
+    if (pcout.is_active())
+      prm.print_parameters(std::cout, ParameterHandler::Text);
+  }
 
   template <int dim>
   void PhaseFieldSolidData<dim>::compute_runtime_parameters()

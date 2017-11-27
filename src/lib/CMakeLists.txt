@@ -18,6 +18,7 @@ ADD_LIBRARY(lib
   Parsers.hpp
   TemperatureSolver.hpp
   FEFunction.hpp
+  WidthSolver.hpp
 )
 
 DEAL_II_SETUP_TARGET(lib)

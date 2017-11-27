@@ -14,11 +14,11 @@ namespace InputData
 	public:
 		SinglePhaseData(ConditionalOStream &pcout_);
 		~SinglePhaseData();
-    void read_input_file(std::string);
-		void update_well_controlls(const double time);
+    virtual void read_input_file(std::string);
+		virtual void update_well_controlls(const double time);
 	private:
-		void assign_parameters();
-		void declare_parameters();
+		virtual void assign_parameters();
+		virtual void declare_parameters();
 
 	// private:
 		// PhaseFieldSolidData<dim>
@@ -28,8 +28,9 @@ namespace InputData
 		double                            porosity, fluid_compressibility,
 																			fluid_density, fluid_viscosity, perm_res,
 																			fracture_compressibility,
-																			init_pressure;
-    int max_pds_steps;
+                                      init_pressure, constant_level_set,
+                                      penalty_theta;
+    unsigned int                      max_fss_steps;
 
     std::vector< RHS::Well<dim>*> wells;  // needs to be deleted in the end
 		RHS::Scheduler<dim>           schedule;
@@ -155,6 +156,8 @@ namespace InputData
       this->prm.declare_entry("Newton tolerance", "1e-9", Patterns::Double());
       this->prm.declare_entry("Max PDS steps", "100", Patterns::Integer());
       this->prm.declare_entry("Max FSS steps", "100", Patterns::Integer());
+      this->prm.declare_entry("Level set constant", "0.1", Patterns::Double());
+      this->prm.declare_entry("Penalty theta", "1000", Patterns::Double());
       this->prm.leave_subsection();
     }
     {
@@ -263,6 +266,8 @@ namespace InputData
 	    this->fluid_compressibility = this->prm.get_double("Fluid compressibility");
 	    this->fluid_density = this->prm.get_double("Fluid density");
 			this->biot_coef = this->prm.get_double("Biot coefficient");
+      AssertThrow(this->biot_coef > this->porosity,
+                  ExcMessage("Biot coefficient should be > porosity"));
 	    this->regularization_parameter_kappa = this->prm.get_double("Regularization kappa");
 	    this->penalty_parameter = this->prm.get_double("Penalization c");
 	    std::vector<double> tmp =
@@ -296,7 +301,11 @@ namespace InputData
 	    this->minimum_time_step = this->prm.get_double("Minimum time step");
 	    this->newton_tolerance = this->prm.get_double("Newton tolerance");
 	    this->max_newton_iter = this->prm.get_integer("Max PDS steps");
-	    this->max_pds_steps = this->prm.get_integer("Max FSS steps");
+	    this->max_fss_steps = this->prm.get_integer("Max FSS steps");
+      this->constant_level_set = this->prm.get_double("Level set constant");
+      AssertThrow(this->constant_level_set < this->phi_refinement_value,
+        ExcMessage("Level set constant should be > phi refinement constant"));
+      this->penalty_theta = this->prm.get_integer("Penalty theta");
 	    this->prm.leave_subsection();
 	  }
 	  { // Postprocessing

@@ -15,3 +15,16 @@ three-point-bending
 notched_test
 input/SCB.geo
 .tags*
+solid-notched_test/*
+pressurized-sneddon/*
+fluid-one_frac/*
+fluid-PKN_very_fine_backup/*
+fluid-PKN_very_fine/*
+fluid-PKN_fine/*
+fluid-PKN_coarse_matched/*
+eaglefrac-acid
+eaglefrac-fluid
+eaglefrac-pressurized
+eaglefrac-solid
+pressurized-two_frac/*
+compile_commands.json

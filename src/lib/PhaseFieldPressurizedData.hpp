@@ -161,17 +161,7 @@ namespace InputData
 	    this->displacement_boundary_components =
 	      Parsers::parse_string_list<int>(this->prm.get("Displacement boundary components"));
 	    this->displacement_boundary_values =
-	      Parsers::parse_string_list<double>(this->prm.get("Displacement boundary velocities"));
-	    // this->displacement_boundary_velocities =
-	    //   parse_string_list<double>(this->prm.get("Displacement boundary velocities"));
-	    // this->displacement_points =
-	    //   parse_point_list<dim>(this->prm.get("Displacement points"));
-	    // this->displacement_point_components =
-	    //   parse_string_list<int>(this->prm.get("Displacement point components"));
-	    // this->displacement_point_velocities =
-	    //   parse_string_list<double>(this->prm.get("Displacement point velocities"));
-	    // this->constraint_point_phase_field =
-	    //   parse_string_list<bool>(this->prm.get("Constraint point phase field"));
+	      Parsers::parse_string_list<double>(this->prm.get("Displacement boundary values"));
 	    this->prm.leave_subsection();
 	  }
 		{ // initial conditions

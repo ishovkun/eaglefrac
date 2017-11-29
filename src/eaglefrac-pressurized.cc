@@ -373,6 +373,8 @@ namespace EagleFrac
 		// phase_field_solver.dof_handler
 	}  // eom
 
+
+
   template <int dim>
   void PDSSolid<dim>::run()
   {
@@ -380,7 +382,6 @@ namespace EagleFrac
     read_mesh();
     data.print_parameters();
 
-    // debug input
     // return;
     prepare_output_directories();
 
@@ -420,9 +421,9 @@ namespace EagleFrac
 		VectorTools::interpolate
 			(phase_field_solver.dof_handler,
 			 InitialValues::Defects<dim>(data.defect_coordinates,
-																	  // idk why e/2, it just works better
-																	//  data.regularization_parameter_epsilon/2),
+																	 // data.regularization_parameter_epsilon/2),
 																	 2*minimum_mesh_size),
+																	 // 4*minimum_mesh_size),
 																	 // data.regularization_parameter_epsilon),
 			 phase_field_solver.solution);
 
@@ -443,6 +444,7 @@ namespace EagleFrac
 
       phase_field_solver.update_old_solution();
 
+
     redo_time_step:
       pcout << std::endl
             << "Time: "
@@ -452,8 +454,8 @@ namespace EagleFrac
             << std::endl;
 
 			double pressure_value = data.pressure_function.value(Point<1>(time));
-      // pcout << pressure_value << std::endl;
-      pressure_value = std::min(10e6, pressure_value);
+      pcout << pressure_value << std::endl;
+      // pressure_value = std::min(10e6, pressure_value);
       // double pressure_value = 1e3;
 			pressure_owned_solution = pressure_value;
 			pressure_relevant_solution = pressure_owned_solution;
@@ -468,6 +470,10 @@ namespace EagleFrac
       const double newton_tolerance = data.newton_tolerance;
       while (newton_step < data.max_newton_iter)
       {
+        // if (time == time_step && newton_step < 2)
+        //   phase_field_solver.decompose_stress = 0;
+        // else
+        //   phase_field_solver.decompose_stress = 2;
         // pcout << "Newton iteration: " << newton_step << "\t";
 				pcout << newton_step << "\t";
 

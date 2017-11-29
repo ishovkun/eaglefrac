@@ -9,13 +9,13 @@ end
 
 subsection Initial conditions
   #              x1,  y1,  x2,  y2
-  set Defects = (1.8, 2,   2.2, 2)
+  set Defects = (15,  20,  25, 20)
 end
 
 subsection Equation data
-  set Pressure                   = 1e-3
-  set Fracture toughness         = 1
-  set Young modulus              = 1
+  set Pressure                   = 1e5
+  set Fracture toughness         = 100
+  set Young modulus              = 1e9
   set Poisson ratio              = 0.2
   set Biot coefficient           = 0.0
   set Regularization epsilon     = 5, 1
@@ -32,10 +32,10 @@ end
 subsection Mesh
   set Level set constant = 0.2
   set Initial global refinement steps = 4
-  set Local refinement region         = 1.7, 2.3, 1.96, 2.04
-  set Adaptive steps                  = 6
+  set Local refinement region         = 14, 26, 18.0, 22.0
+  set Adaptive steps                  = 7
   set Adaptive phi value              = 0.9
-  set Mesh file                       = input/4x4.msh
+  set Mesh file                       = input/40x40.msh
 end
 
 
@@ -51,7 +51,7 @@ subsection Postprocessing
   set Functions = COD
   #                coord_start, coord_end, n_point,  direction
   # n_points should be 2n+1, and start/end points should be in nodes
-  set Arguments = (1.5,          2.5,      33,       1)
+  set Arguments = (15,          25,      33,       1)
 end
 
 

@@ -10,9 +10,9 @@ end
 
 subsection Equation data
   set Fracture toughness         = 2.7
-  set Young modulus              = 210000
+  set Young modulus              = 2.1e5
   set Poisson ratio              = 0.3
-  set Regularization epsilon     = 3, 1
+  set Regularization epsilon     = 2, 1
   set Regularization kappa       = 1e-10
   set Penalization c             = 10
   set Uniform Poisson ratio      = true

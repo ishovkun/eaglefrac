@@ -19,6 +19,7 @@ ADD_LIBRARY(lib
   TemperatureSolver.hpp
   FEFunction.hpp
   WidthSolver.hpp
+  DecompositionHeister.hpp
 )
 
 DEAL_II_SETUP_TARGET(lib)

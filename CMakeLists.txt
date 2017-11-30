@@ -49,8 +49,8 @@ set(CMAKE_BUILD_TYPE Debug)
 ADD_EXECUTABLE(eaglefrac-pressurized ${CMAKE_SOURCE_DIR}/src/eaglefrac-pressurized.cc)
 DEAL_II_SETUP_TARGET(eaglefrac-pressurized)
 
-# ADD_EXECUTABLE(eaglefrac-fluid ${CMAKE_SOURCE_DIR}/src/eaglefrac-fluid.cc)
-# DEAL_II_SETUP_TARGET(eaglefrac-fluid)
+ADD_EXECUTABLE(eaglefrac-fluid ${CMAKE_SOURCE_DIR}/src/eaglefrac-fluid.cc)
+DEAL_II_SETUP_TARGET(eaglefrac-fluid)
 
 # ADD_EXECUTABLE(eaglefrac-acid ${CMAKE_SOURCE_DIR}/src/eaglefrac-acid.cc)
 # DEAL_II_SETUP_TARGET(eaglefrac-acid)
@@ -58,7 +58,7 @@ DEAL_II_SETUP_TARGET(eaglefrac-pressurized)
 # linking
 # TARGET_LINK_LIBRARIES(eaglefrac-solid lib boost_filesystem)
 TARGET_LINK_LIBRARIES(eaglefrac-pressurized lib boost_filesystem)
-# TARGET_LINK_LIBRARIES(eaglefrac-fluid lib boost_filesystem)
+TARGET_LINK_LIBRARIES(eaglefrac-fluid lib boost_filesystem)
 # TARGET_LINK_LIBRARIES(eaglefrac-acid lib boost_filesystem)
 
 # DEAL_II_INVOKE_AUTOPILOT()

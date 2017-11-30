@@ -43,6 +43,7 @@ namespace EagleFrac
     void impose_displacement_on_solution(const double mult = 1);
     void output_results(int time_step_number, double time); //const;
     void refine_mesh();
+    void compute_permeability();
     void execute_postprocessing(const double time);
     void exectute_adaptive_refinement();
     void prepare_output_directories();
@@ -66,8 +67,8 @@ namespace EagleFrac
 
     InputData::SinglePhaseData<dim>   data;
     PhaseField::PhaseFieldSolver<dim> phase_field_solver;
-		FluidSolvers::PressureSolver<dim> pressure_solver;
     PhaseField::WidthSolver<dim>      width_solver;
+		FluidSolvers::PressureSolver<dim> pressure_solver;
 
     std::string input_file_name, case_name;
 
@@ -75,6 +76,7 @@ namespace EagleFrac
 		// this allows having a real time value in Paraview
 		std::vector< std::pair<double,std::string> > times_and_names;
     std::vector< Vector<double> > stresses;
+    Vector<double> permeability;
   };
 
 
@@ -96,15 +98,16 @@ namespace EagleFrac
     phase_field_solver(mpi_communicator,
                        triangulation, data,
                        pcout, computing_timer),
-    pressure_solver(mpi_communicator,
-										triangulation, data,
-										phase_field_solver.dof_handler, phase_field_solver.fe,
-										pcout, computing_timer),
     width_solver(mpi_communicator,
                  triangulation,
                  data,
                  phase_field_solver.dof_handler,
                  pcout, computing_timer),
+    pressure_solver(mpi_communicator,
+										triangulation, data,
+										phase_field_solver.dof_handler,
+                    width_solver.get_dof_handler(),
+										pcout, computing_timer),
     input_file_name(input_file_name_)
   {}
 
@@ -242,8 +245,8 @@ namespace EagleFrac
 		computing_timer.enter_section("Setup full system");
 
 		phase_field_solver.setup_dofs();
-		pressure_solver.setup_dofs();
     width_solver.setup_dofs();
+		pressure_solver.setup_dofs();
 
     // Setup container for stresses
     if (stresses.size() != dim)
@@ -251,6 +254,7 @@ namespace EagleFrac
     for (int i=0; i<dim; ++i)
 			stresses[i].reinit(triangulation.n_active_cells());
 
+    permeability.reinit(triangulation.n_active_cells());
     // Use when wells are located in cell  centers
 		// auto & pressure_dof_handler = pressure_solver.get_dof_handler();
 		// for (unsigned int w=0; w<data.wells.size(); ++w)
@@ -273,12 +277,85 @@ namespace EagleFrac
 
 
   template <int dim>
+  void SinglePhaseModel<dim>::compute_permeability()
+  {
+    const auto & dof_handler_width = width_solver.get_dof_handler();
+    const auto & dof_handler_solid = phase_field_solver.dof_handler;
+    const auto & fe_width = dof_handler_width.get_fe();
+    const auto & fe_solid = dof_handler_solid.get_fe();
+
+  	const QGauss<dim> quadrature_formula(1);
+  	FEValues<dim> fe_values_solid(fe_solid, quadrature_formula,
+                                  update_values);
+  	FEValues<dim> fe_values_width(fe_width, quadrature_formula,
+                          				update_values);
+
+	  const unsigned int n_q_points    = quadrature_formula.size();
+  	std::vector<double>  				 phi_values(n_q_points);
+  	std::vector<double>  				 width_values(n_q_points);
+
+		const FEValuesExtractors::Scalar phase_field(dim);
+
+	  typename DoFHandler<dim>::active_cell_iterator
+		  cell = dof_handler_width.begin_active(),
+		  cell_solid = dof_handler_solid.begin_active(),
+		  endc = dof_handler_width.end();
+
+    unsigned int cell_ind = 0;
+	  for (; cell!=endc; ++cell, ++cell_solid)
+    {
+      if (!cell->is_artificial())
+      {
+        fe_values_width.reinit(cell);
+        fe_values_solid.reinit(cell_solid);
+	      fe_values_solid[phase_field].
+          get_function_values(phase_field_solver.relevant_solution, phi_values);
+        fe_values_width.get_function_values(width_solver.relevant_solution,
+                                            width_values);
+        // values that separate fracture, reservoir, and cake zone
+        double cx = 0.1;
+        double c1 = 0.5 - cx;
+        double c2 = 0.5 + cx;
+        // Indicator functions
+        double xi_f = (c2 - phi_values[0])/(c2 - c1);
+        // double xi_r = (phi_values[0] - c1)/(c2 - c1);
+        if (phi_values[0] <= c1)
+					{
+						xi_f = 1.0;
+						// xi_r = 0.0;
+					}
+        if (phi_values[0] >= c2)
+					{
+						xi_f = 0.0;
+						// xi_r = 1.0;
+					}
+        double w = std::max(width_values[0], 0.0);  // absolute value
+        double perm_f = 1.0/12.0*w*w;   // fracture perm from lubrication theory
+        // perm_f = 10*data.perm_res;
+        // perm_f = 1e-11;
+        // perm_f = std::max(1e3*data.perm_res, perm_f);
+        perm_f = std::max(1e-11, perm_f);
+        // perm_f = std::max(data.perm_res, perm_f);
+
+        // interpolate pereability
+        double K_eff = (data.perm_res + xi_f*(perm_f - data.perm_res));
+
+        // K_eff = std::max(data.perm_res/data.fluid_viscosity, K_eff);
+        permeability[cell_ind] = K_eff;
+
+      }
+      cell_ind++;
+    }
+  }
+
+  template <int dim>
   void SinglePhaseModel<dim>::run()
   {
     data.read_input_file(input_file_name);
     read_mesh();
     pcout << "level set constant " << data.constant_level_set << std::endl;
     pcout << "penalty theta " << data.penalty_theta << std::endl;
+    data.print_parameters();
 
 		auto & pressure_dof_handler = pressure_solver.get_dof_handler();
 		auto & pressure_fe = pressure_solver.get_fe();
@@ -589,9 +666,12 @@ namespace EagleFrac
 
 				// if (time_step_number > 1)
         { // Solve for width
-          width_solver.compute_level_set(phase_field_solver.relevant_solution);
+          phase_field_solver.relevant_solution =
+            phase_field_solver.solution;
+          // width_solver.compute_level_set(phase_field_solver.relevant_solution);
           width_solver.assemble_system(phase_field_solver.relevant_solution);
-          width_solver.solve_system();
+          const unsigned int n_width_iter = width_solver.solve_system();
+          pcout << "Width solve " << n_width_iter << " steps" << std::endl;
           width_solver.relevant_solution = width_solver.solution;
         }
 				{ // Solve for pressure
@@ -599,10 +679,12 @@ namespace EagleFrac
 					phase_field_solver.relevant_solution = phase_field_solver.solution;
 					pressure_solver.assemble_system(phase_field_solver.relevant_solution,
 																					phase_field_solver.old_solution,
+                                          width_solver.relevant_solution,
 																					time_step);
 					const unsigned int n_pressure_iter = pressure_solver.solve();
 					pressure_solver.relevant_solution = pressure_solver.solution;
 					pcout << n_pressure_iter << std::endl;
+          pcout << "Pmean " << pressure_solver.solution.mean_value() << std::endl;
 				}
 
 				fss_error = pressure_solver.solution_increment_norm
@@ -887,7 +969,9 @@ namespace EagleFrac
 														 width_solver.relevant_solution,
 														 "width");
     // add material ids
-    data_out.add_data_vector(width_solver.material_ids, "ID");
+    // data_out.add_data_vector(width_solver.material_ids, "ID");
+    compute_permeability();
+    data_out.add_data_vector(permeability, "permeability");
 
     data_out.build_patches();
 

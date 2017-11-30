@@ -27,9 +27,9 @@ p = 1e5
 xf = 10./2
 c = 20.0 # center
 
-data_fe = pd.read_csv("../pressurized-sneddon/width_line_plot.csv")
-w = data_fe['width'].values
-arc_l = data_fe['arc_length'].values
+#  data_fe = pd.read_csv("../pressurized-sneddon/width_line_plot.csv")
+#  w = data_fe['width'].values
+#  arc_l = data_fe['arc_length'].values
 
 # analytical solution (Sneddon)
 
@@ -44,9 +44,9 @@ cod_an = 4.*p*xf/E_prime*(np.clip(1.0 - (x_an - c)**2/xf**2, 0., 1.))**0.5
 fig = plt.figure(figsize=(10, 8))
 plt.plot(x, cod*1e3, "k", label="explicit integraion")
 plt.plot(x_an, cod_an*1e3, label="analytical")
-plt.plot(arc_l, w*1e3, "ro", label="solver")
+#  plt.plot(arc_l, w*1e3, "ro", label="solver")
 plt.xlabel("x (m)", fontsize=20)
-plt.ylabel("COD (mm)", fontsize=20)
+plt.ylabel("Width (mm)", fontsize=20)
 plt.legend(loc=8, frameon=False, fontsize=20)
 plt.ylim(-1e-4, None)
 plt.xlim(c-xf, c+xf)

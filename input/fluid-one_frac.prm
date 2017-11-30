@@ -5,15 +5,14 @@ subsection Boundary conditions
   set Displacement boundary labels     = 0, 1, 2, 3
   #                                      x  x  y  y
   set Displacement boundary components = 0, 0, 1, 1
-  set Displacement boundary values     = 0, -1e-1, 0, -1e-1
+  set Displacement boundary values     = 0, 0, 0, 0
 end
 
 
 subsection Initial conditions
   #              x1,  y1,  x2,  y2
-  # set Defects = (19.5,  20,  20.5, 20)
-  set Defects = (20,  20,  20, 20)
-  set Reservoir pressure = 1e6
+  set Defects = (17,  20,  22, 20)
+  set Reservoir pressure = 0e0
 end
 
 subsection Wells
@@ -23,8 +22,7 @@ subsection Wells
 
   #time name control value
   set Schedule = \
-  (0.0, A, 0, 0e-5); \
-  (8.0, A, 0, 0e-3);
+  (0.0, A, 0, 1e-4);
 end
 
 subsection Equation data
@@ -37,6 +35,7 @@ subsection Equation data
   set Fluid viscosity            = 1e-3
   set Fluid density              = 1000 # not used in the model
   set Reservoir permeability     = 1e-14
+  set Reservoir porosity         = 0.3
   set Regularization epsilon     = 2, 1
   set Regularization kappa       = 1e-9
   set Penalization c             = 1e7
@@ -46,9 +45,9 @@ end
 
 
 subsection Mesh
-  set Initial global refinement steps = 5
+  set Initial global refinement steps = 3
   set Local refinement region         = 16, 24, 17.5, 22.5
-  set Adaptive steps                  = 0
+  set Adaptive steps                  = 2
   set Adaptive phi value              = 0.6
   set Mesh file                       = input/40x40.msh
 end
@@ -56,7 +55,7 @@ end
 
 subsection Solver
   set T max               = 100
-  set Time stepping table = (0, 0.01);# (1, 1); (4.5, 0.001); #(15, 5e-3)
+  set Time stepping table = (0, 0.1);
   set Max PDS steps       = 100
   set Max FSS steps       = 30
   set Minimum time step   = 1e-5

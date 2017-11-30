@@ -41,13 +41,14 @@ namespace FluidSolvers
                    parallel::distributed::Triangulation<dim> &triangulation_,
                    const InputData::SinglePhaseData<dim>     &data_,
                    const DoFHandler<dim>                     &dof_handler_solid_,
-                   const FESystem<dim>                       &fe_solid_,
+                   const DoFHandler<dim>                     &dof_handler_width_,
                    ConditionalOStream                        &pcout_,
                    TimerOutput                               &computing_timer_);
 		~PressureSolver();
 		void setup_dofs();
 		void assemble_system(const TrilinosWrappers::MPI::BlockVector &solution_solid,
 												 const TrilinosWrappers::MPI::BlockVector &old_solution_solid,
+                         const TrilinosWrappers::MPI::BlockVector &solution_width,
 												 const double time_step);
 		const DoFHandler<dim> &get_dof_handler();
 		const FESystem<dim>   &get_fe();
@@ -67,7 +68,7 @@ namespace FluidSolvers
 		// Pointers to couple with phase_field_solver
 		// these are set by method set_coupling
 		const DoFHandler<dim>            					&dof_handler_solid;
-		const FESystem<dim> 						 					&fe_solid;
+		const DoFHandler<dim>            					&dof_handler_width;
 		// auxilary objects
 		ConditionalOStream 												&pcout;
 		TimerOutput 			 												&computing_timer;
@@ -92,7 +93,7 @@ namespace FluidSolvers
    parallel::distributed::Triangulation<dim> &triangulation_,
    const InputData::SinglePhaseData<dim>     &data_,
 	 const DoFHandler<dim>                     &dof_handler_solid_,
-	 const FESystem<dim>                       &fe_solid_,
+	 const DoFHandler<dim>                     &dof_handler_width_,
    ConditionalOStream                        &pcout_,
    TimerOutput                               &computing_timer_)
 	:
@@ -101,7 +102,7 @@ namespace FluidSolvers
   data(data_),
   dof_handler(triangulation_),
 	dof_handler_solid(dof_handler_solid_),
-	fe_solid(fe_solid_),
+	dof_handler_width(dof_handler_width_),
   pcout(pcout_),
   computing_timer(computing_timer_),
   fe(FE_Q<dim>(1), 1), // one linear pressure component
@@ -178,9 +179,13 @@ namespace FluidSolvers
 	PressureSolver<dim>::
 	assemble_system(const TrilinosWrappers::MPI::BlockVector &solution_solid,
 									const TrilinosWrappers::MPI::BlockVector &old_solution_solid,
+									const TrilinosWrappers::MPI::BlockVector &solution_width,
 									const double                       time_step)
 	{
     computing_timer.enter_section("Assemble pressure system");
+
+    const auto & fe_solid = dof_handler_solid.get_fe();
+    const auto & fe_width = dof_handler_width.get_fe();
 
   	const QGauss<dim> quadrature_formula(fe.degree+2);
   	FEValues<dim> fe_values(fe, quadrature_formula,
@@ -190,6 +195,8 @@ namespace FluidSolvers
   	FEValues<dim> fe_values_solid(fe_solid, quadrature_formula,
                           				update_values | update_gradients |
 																	update_quadrature_points);
+  	FEValues<dim> fe_values_width(fe_width, quadrature_formula,
+                          				update_values);
 
 		const FEValuesExtractors::Vector displacement(0);
 		const FEValuesExtractors::Scalar phase_field(dim);
@@ -207,6 +214,7 @@ namespace FluidSolvers
 		std::vector< Tensor<1,dim> > u_values(n_q_points);
 		std::vector<double>  				 div_u_values(n_q_points);
 		std::vector<double>  				 div_old_u_values(n_q_points);
+  	std::vector<double>  				 width_values(n_q_points);
 		// std::vector< Tensor<1,dim> > old_u_values(n_q_points);
 
 		// shape functions
@@ -226,9 +234,10 @@ namespace FluidSolvers
 	  typename DoFHandler<dim>::active_cell_iterator
 		  cell = dof_handler.begin_active(),
 		  cell_solid = dof_handler_solid.begin_active(),
+		  cell_width = dof_handler_width.begin_active(),
 		  endc = dof_handler.end();
 
-	  for (; cell!=endc; ++cell, ++cell_solid)
+	  for (; cell!=endc; ++cell, ++cell_solid, ++cell_width)
 	    if (cell->is_locally_owned())
 			{
 				local_matrix = 0;
@@ -236,6 +245,7 @@ namespace FluidSolvers
 
 				fe_values.reinit(cell);
 				fe_values_solid.reinit(cell_solid);
+				fe_values_width.reinit(cell_width);
 
 				// extract solution values
 	      fe_values_solid[phase_field].get_function_values(solution_solid, phi_values);
@@ -246,6 +256,7 @@ namespace FluidSolvers
                                          								  		 div_old_u_values);
 	      fe_values[pressure].get_function_values(relevant_solution, p_values);
 	      fe_values[pressure].get_function_values(old_solution, old_p_values);
+        fe_values_width.get_function_values(solution_width, width_values);
 
 
 				// compute poroelastic coefficients
@@ -284,7 +295,7 @@ namespace FluidSolvers
           //
           test_flow_rate += source_term*fe_values.JxW(q);
 					// values that separate fracture, reservoir, and cake zone
-					double cx = 0.2;
+					double cx = 0.1;
 					double c1 = 0.5 - cx;
 					double c2 = 0.5 + cx;
 					// Indicator functions
@@ -303,16 +314,18 @@ namespace FluidSolvers
 
 					// compute perm
 					// this is a simplistic way to compute frac width but is good for now
-					double w = 2*u_values[q].norm();  // absolute value
+					// double w = 2*u_values[q].norm();  // absolute value
+					double w = std::max(width_values[q], 0.0);  // absolute value
 					double perm_f = 1.0/12.0*w*w;   // fracture perm from lubrication theory
 					// perm_f = 10*data.perm_res;
 					// perm_f = 1e-11;
 					// perm_f = std::max(1e3*data.perm_res, perm_f);
 					perm_f = std::max(1e-11, perm_f);
+					// perm_f = std::max(data.perm_res, perm_f);
 
 					// interpolate pereability
-					double K_eff =
-						(data.perm_res + xi_f*(perm_f - data.perm_res))/data.fluid_viscosity;
+          const double perm_eff = data.perm_res + xi_f*(perm_f - data.perm_res);
+					const double K_eff = perm_eff/data.fluid_viscosity;
 
 					// K_eff = std::max(data.perm_res/data.fluid_viscosity, K_eff);
 

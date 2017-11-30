@@ -970,8 +970,8 @@ solve_newton_step(const std::pair<double,double> &time_steps)
       solution += solution_update;
       compute_nonlinear_residual(solution, time_steps);
       all_constraints.set_zero(residual);
-      // double error = residual.l2_norm();
-      double error = residual.linfty_norm();
+      double error = residual.l2_norm();
+      // double error = residual.linfty_norm();
 
       if (error < old_error)
         break;
@@ -1060,8 +1060,8 @@ compute_nonlinear_residual(const TrilinosWrappers::MPI::BlockVector &linerarizat
                            const std::pair<double,double> &time_steps)
 {
   assemble_system(linerarization_point, time_steps, false);
-  // return residual.l2_norm();
-  return residual.linfty_norm();
+  return residual.l2_norm();
+  // return residual.linfty_norm();
 }    // EOM
 
 
@@ -1077,6 +1077,7 @@ template <int dim>
 double PhaseFieldSolver<dim>::residual_norm() const
 {
   return residual.l2_norm();
+  // return residual.linfty_norm();
 }    // eom
 
 

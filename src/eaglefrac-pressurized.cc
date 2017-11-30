@@ -470,11 +470,6 @@ namespace EagleFrac
       const double newton_tolerance = data.newton_tolerance;
       while (newton_step < data.max_newton_iter)
       {
-        // if (time == time_step && newton_step < 2)
-        //   phase_field_solver.decompose_stress = 0;
-        // else
-        //   phase_field_solver.decompose_stress = 2;
-        // pcout << "Newton iteration: " << newton_step << "\t";
 				pcout << newton_step << "\t";
 
         double error = std::numeric_limits<double>::max();
@@ -560,9 +555,9 @@ namespace EagleFrac
       { // Solve for width
 				phase_field_solver.relevant_solution =
 					phase_field_solver.solution;
-        width_solver.compute_level_set(phase_field_solver.relevant_solution);
+        // width_solver.compute_level_set(phase_field_solver.relevant_solution);
         width_solver.assemble_system(phase_field_solver.relevant_solution);
-        unsigned int n_solver_steps = width_solver.solve_system();
+        const unsigned int n_solver_steps = width_solver.solve_system();
         pcout << "Width Solver: " << n_solver_steps << " steps" << std::endl;
         width_solver.relevant_solution = width_solver.solution;
       }
@@ -690,7 +685,7 @@ namespace EagleFrac
 		data_out.add_data_vector(width_dof_handler,
 														 width_solver.relevant_solution,
 														 "width");
-    data_out.add_data_vector(width_solver.material_ids, "ID");
+    // data_out.add_data_vector(width_solver.material_ids, "ID");
 
     data_out.build_patches();
 

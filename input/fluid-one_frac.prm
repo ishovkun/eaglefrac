@@ -11,23 +11,34 @@ end
 
 subsection Initial conditions
   #              x1,  y1,  x2,  y2
-  set Defects = (1.8, 2,   2.2, 2)
-  set Reservoir pressure = 1e5
+  set Defects = (17,  20,  22, 20)
+  set Reservoir pressure = 0e0
+end
+
+subsection Wells
+  #name #x #y #r
+  set Location = \
+  (A, 20, 20, 1);
+
+  #time name control value
+  set Schedule = \
+  (0.0, A, 0, 1e-4);
 end
 
 subsection Equation data
-  set Fracture toughness         = 1
+  set Fracture toughness         = 4.58
   set Young modulus              = 1e8
   set Poisson ratio              = 0.2
-  set Biot coefficient           = 0.9
-  set Fracture compressibility   = 1e-6
-  set Fluid compressibility      = 1e-8
+  set Biot coefficient           = 0.8
+  set Fracture compressibility   = 1e-8
+  set Fluid compressibility      = 1e-7
   set Fluid viscosity            = 1e-3
-  set Fluid density              = 1000
-  set Reservoir permeability     = 1e-12
-  set Regularization epsilon     = 4, 1
-  set Regularization kappa       = 1e-10
-  set Penalization c             = 1e3
+  set Fluid density              = 1000 # not used in the model
+  set Reservoir permeability     = 1e-14
+  set Reservoir porosity         = 0.3
+  set Regularization epsilon     = 2, 1
+  set Regularization kappa       = 1e-9
+  set Penalization c             = 1e7
   set Uniform Young modulus      = true
   set Uniform fracture toughness = true
 end
@@ -35,25 +46,25 @@ end
 
 subsection Mesh
   set Initial global refinement steps = 3
-  set Local refinement steps          = 2
-  set Local refinement region         = 1.5, 2.5, 1.7, 2.3
+  set Local refinement region         = 16, 24, 17.5, 22.5
   set Adaptive steps                  = 2
-  set Adaptive phi value              = 0.8
-  set Mesh file                       = input/4x4.msh
+  set Adaptive phi value              = 0.6
+  set Mesh file                       = input/40x40.msh
 end
 
 
 subsection Solver
-  set Time stepping table = (0, 1e-1);(5.3, 1e-2); # (5.9, 1e-3)
-  set Max Newton steps    = 40
+  set T max               = 100
+  set Time stepping table = (0, 0.1);
+  set Max PDS steps       = 100
+  set Max FSS steps       = 30
   set Minimum time step   = 1e-5
-  set Newton tolerance    = 1e-9
-  set T max               = 20
+  set Newton tolerance    = 1e-7
 end
 
 subsection Postprocessing
-  set Functions = boundary_load
-  set Arguments = (3);
+  set Functions = well_pressure
+  set Arguments = ();
 end
 
 

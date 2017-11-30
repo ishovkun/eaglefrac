@@ -90,11 +90,11 @@ namespace ConstitutiveModel {
   void compute_eigenvalues(const Tensor<2,dim> &eps,
                            Tensor<1,dim>       &lambda)
   {
-    double trace_eps = trace(eps);
+    const double trace_eps = trace(eps);
 
     if ( std::abs(eps[0][1]) > 1e-10*trace_eps )
     {
-      double det_eps = determinant(eps);
+      const double det_eps = determinant(eps);
       double tmp = std::sqrt(trace_eps*trace_eps/4 - det_eps);
       lambda[0] = trace_eps/2 + tmp;
       lambda[1] = trace_eps/2 - tmp;
@@ -250,7 +250,7 @@ namespace ConstitutiveModel {
     Tensor<1,dim> lambda, lambda_du;
     Tensor<2,dim> lambda_matrix, lambda_matrix_du;
     Tensor<2,dim> eps_plus, eps_u_plus;
-    Tensor<2,dim> identity_tensor;
+    const Tensor<2,dim> identity_tensor;
   };
 
 
@@ -328,8 +328,8 @@ stress_spectral_decomposition(const Tensor<2,dim> &eps,
   eps_plus = p_matrix*lambda_matrix*transpose(p_matrix);
 
   // Finally, get stress tensor decomposition
-  double trace_eps = trace(eps);
-  double trace_eps_plus = std::max(trace_eps, 0.0);
+  const double trace_eps = trace(eps);
+  const double trace_eps_plus = std::max(trace_eps, 0.0);
 
   stress_tensor_plus =
       lame_constant*trace_eps_plus*identity_tensor +

@@ -38,6 +38,7 @@ be added to the Wiki page when I'm in the mood.
 - Parallel output to .vtu
 
 ## Usage
+**IMPORTANT**: apparently, this code only works with an older version of deal-ii 8.4.0.
 Build deallii with mpi, Trilinos, and p4est from
 - dealii http://www.dealii.org/download.html
 - Trilinos https://trilinos.org/
@@ -78,6 +79,7 @@ I ran the following cmake command (for system-wide installations)
 cmake -DCMAKE_INSTALL_PREFIX=/usr/local \
       -DDEAL_II_WITH_MPI=ON \
       -DDEAL_II_WITH_TRILINOS=ON \
+      -DDEAL_II_WITH_P4EST=ON
       -DTRILINOS_DIR=/path/to/trilinos \
       -DP4EST_DIR=/path/to/p4est \
       ..

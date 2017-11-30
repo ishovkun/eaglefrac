@@ -3,7 +3,7 @@
 #include <deal.II/base/utilities.h>
 #include <deal.II/base/quadrature_lib.h>
 #include <deal.II/base/timer.h>
-// #include <deal.II/base/function.h>
+#include <deal.II/base/function.h>
 // #include <deal.II/base/tensor.h>
 
 // Trilinos stuff
@@ -38,21 +38,22 @@ namespace FluidSolvers
 	{
 	public:
 		PressureSolver(MPI_Comm                                  &mpi_communicator_,
-                 	 parallel::distributed::Triangulation<dim> &triangulation_,
-                 	 const InputData::SinglePhaseData<dim>     &data_,
-									 const DoFHandler<dim>                     &dof_handler_solid_,
-									 const FESystem<dim>                       &fe_solid_,
+                   parallel::distributed::Triangulation<dim> &triangulation_,
+                   const InputData::SinglePhaseData<dim>     &data_,
+                   const DoFHandler<dim>                     &dof_handler_solid_,
+                   const DoFHandler<dim>                     &dof_handler_width_,
                    ConditionalOStream                        &pcout_,
-                 	 TimerOutput                               &computing_timer_);
+                   TimerOutput                               &computing_timer_);
 		~PressureSolver();
 		void setup_dofs();
 		void assemble_system(const TrilinosWrappers::MPI::BlockVector &solution_solid,
 												 const TrilinosWrappers::MPI::BlockVector &old_solution_solid,
+                         const TrilinosWrappers::MPI::BlockVector &solution_width,
 												 const double time_step);
 		const DoFHandler<dim> &get_dof_handler();
 		const FESystem<dim>   &get_fe();
 		const ConstraintMatrix &get_constraint_matrix();
-		double solve();
+		unsigned int solve();
 		double 	solution_increment_norm(
 			const TrilinosWrappers::MPI::BlockVector &linearization_point_relevant,
 			const TrilinosWrappers::MPI::BlockVector &old_iter_solution_relevant);
@@ -67,7 +68,7 @@ namespace FluidSolvers
 		// Pointers to couple with phase_field_solver
 		// these are set by method set_coupling
 		const DoFHandler<dim>            					&dof_handler_solid;
-		const FESystem<dim> 						 					&fe_solid;
+		const DoFHandler<dim>            					&dof_handler_width;
 		// auxilary objects
 		ConditionalOStream 												&pcout;
 		TimerOutput 			 												&computing_timer;
@@ -92,7 +93,7 @@ namespace FluidSolvers
    parallel::distributed::Triangulation<dim> &triangulation_,
    const InputData::SinglePhaseData<dim>     &data_,
 	 const DoFHandler<dim>                     &dof_handler_solid_,
-	 const FESystem<dim>                       &fe_solid_,
+	 const DoFHandler<dim>                     &dof_handler_width_,
    ConditionalOStream                        &pcout_,
    TimerOutput                               &computing_timer_)
 	:
@@ -101,7 +102,7 @@ namespace FluidSolvers
   data(data_),
   dof_handler(triangulation_),
 	dof_handler_solid(dof_handler_solid_),
-	fe_solid(fe_solid_),
+	dof_handler_width(dof_handler_width_),
   pcout(pcout_),
   computing_timer(computing_timer_),
   fe(FE_Q<dim>(1), 1), // one linear pressure component
@@ -113,7 +114,8 @@ namespace FluidSolvers
 	PressureSolver<dim>::~PressureSolver()
 	{
   	dof_handler.clear();
-	}
+	}  // eom
+
 
 	template <int dim> void
 	PressureSolver<dim>::setup_dofs()
@@ -132,9 +134,23 @@ namespace FluidSolvers
 
 		{ // Constraints
 			// only hanging nodes
+      ConstraintMatrix hanging_node_constraints;
+      hanging_node_constraints.clear();
+      hanging_node_constraints.reinit(locally_relevant_dofs);
+	    DoFTools::make_hanging_node_constraints(dof_handler,
+                                              hanging_node_constraints);
+      hanging_node_constraints.close();
+      // make constant pressure boundary conditions
 			constraints.clear();
 			constraints.reinit(locally_relevant_dofs);
-	    DoFTools::make_hanging_node_constraints(dof_handler, constraints);
+      constraints.merge(hanging_node_constraints);
+      const FEValuesExtractors::Scalar pressure_mask(0);
+      const auto & boundary_ids = triangulation.get_boundary_ids();
+      for (unsigned int i=0; i<boundary_ids.size(); i++)
+        VectorTools::interpolate_boundary_values
+          (dof_handler, boundary_ids[i],
+           ConstantFunction<dim>(data.init_pressure, 1),
+           constraints, fe.component_mask(pressure_mask));
     	constraints.close();
 		}
 
@@ -163,9 +179,13 @@ namespace FluidSolvers
 	PressureSolver<dim>::
 	assemble_system(const TrilinosWrappers::MPI::BlockVector &solution_solid,
 									const TrilinosWrappers::MPI::BlockVector &old_solution_solid,
+									const TrilinosWrappers::MPI::BlockVector &solution_width,
 									const double                       time_step)
 	{
-    computing_timer.enter_section("Assmeble pressure system");
+    computing_timer.enter_section("Assemble pressure system");
+
+    const auto & fe_solid = dof_handler_solid.get_fe();
+    const auto & fe_width = dof_handler_width.get_fe();
 
   	const QGauss<dim> quadrature_formula(fe.degree+2);
   	FEValues<dim> fe_values(fe, quadrature_formula,
@@ -175,6 +195,8 @@ namespace FluidSolvers
   	FEValues<dim> fe_values_solid(fe_solid, quadrature_formula,
                           				update_values | update_gradients |
 																	update_quadrature_points);
+  	FEValues<dim> fe_values_width(fe_width, quadrature_formula,
+                          				update_values);
 
 		const FEValuesExtractors::Vector displacement(0);
 		const FEValuesExtractors::Scalar phase_field(dim);
@@ -192,6 +214,7 @@ namespace FluidSolvers
 		std::vector< Tensor<1,dim> > u_values(n_q_points);
 		std::vector<double>  				 div_u_values(n_q_points);
 		std::vector<double>  				 div_old_u_values(n_q_points);
+  	std::vector<double>  				 width_values(n_q_points);
 		// std::vector< Tensor<1,dim> > old_u_values(n_q_points);
 
 		// shape functions
@@ -200,15 +223,21 @@ namespace FluidSolvers
 
   	std::vector<types::global_dof_index> local_dof_indices(dofs_per_cell);
 
+    // Just checking how the source term function performs
+    // double total_flux = 0;
+
 		system_matrix = 0;
 		rhs_vector = 0;
+
+    double test_flow_rate = 0.0;
 
 	  typename DoFHandler<dim>::active_cell_iterator
 		  cell = dof_handler.begin_active(),
 		  cell_solid = dof_handler_solid.begin_active(),
+		  cell_width = dof_handler_width.begin_active(),
 		  endc = dof_handler.end();
 
-	  for (; cell!=endc; ++cell, ++cell_solid)
+	  for (; cell!=endc; ++cell, ++cell_solid, ++cell_width)
 	    if (cell->is_locally_owned())
 			{
 				local_matrix = 0;
@@ -216,6 +245,7 @@ namespace FluidSolvers
 
 				fe_values.reinit(cell);
 				fe_values_solid.reinit(cell_solid);
+				fe_values_width.reinit(cell_width);
 
 				// extract solution values
 	      fe_values_solid[phase_field].get_function_values(solution_solid, phi_values);
@@ -226,8 +256,8 @@ namespace FluidSolvers
                                          								  		 div_old_u_values);
 	      fe_values[pressure].get_function_values(relevant_solution, p_values);
 	      fe_values[pressure].get_function_values(old_solution, old_p_values);
+        fe_values_width.get_function_values(solution_width, width_values);
 
-				auto & quadrature_points = fe_values.get_quadrature_points();
 
 				// compute poroelastic coefficients
 	      double E = data.get_young_modulus->value(cell_solid->center(), 0);
@@ -250,15 +280,20 @@ namespace FluidSolvers
 				// this works good for 2D
         double beta = 0.25*data.biot_coef*data.biot_coef/bulk_modulus;
 
-				// double source_term = 0;
-				// for (unsigned int k=0; k<data.wells.size(); ++k)
-				// 	source_term += data.wells[k]->value(cell->center(), 0);
-
-				// pcout << std::endl;
-				// pcout << "poro " << data.porosity << std::endl;
+        // double source_term = 0;
+        // for (unsigned int k=0; k<data.wells.size(); ++k)
+        //   source_term += data.wells[k]->value(cell->center(), 0) /
+        //     cell->measure(); // / dofs_per_cell;
+        const auto & q_points = fe_values.get_quadrature_points();
 
 				for (unsigned int q=0; q<n_q_points; ++q)
 				{
+          // Wellbore
+          double source_term = 0;
+          for (unsigned int k=0; k<data.wells.size(); ++k)
+            source_term += data.wells[k]->value(q_points[q], 0);
+          //
+          test_flow_rate += source_term*fe_values.JxW(q);
 					// values that separate fracture, reservoir, and cake zone
 					double cx = 0.1;
 					double c1 = 0.5 - cx;
@@ -279,21 +314,20 @@ namespace FluidSolvers
 
 					// compute perm
 					// this is a simplistic way to compute frac width but is good for now
-					double w = u_values[q].norm();  // absolute value
+					// double w = 2*u_values[q].norm();  // absolute value
+					double w = std::max(width_values[q], 0.0);  // absolute value
 					double perm_f = 1.0/12.0*w*w;   // fracture perm from lubrication theory
 					// perm_f = 10*data.perm_res;
 					// perm_f = 1e-11;
-					perm_f = std::max(1e-12, perm_f);
+					// perm_f = std::max(1e3*data.perm_res, perm_f);
+					perm_f = std::max(1e-11, perm_f);
+					// perm_f = std::max(data.perm_res, perm_f);
 
 					// interpolate pereability
-					double K_eff =
-						(data.perm_res + xi_f*(perm_f - data.perm_res))/data.fluid_viscosity;
+          const double perm_eff = data.perm_res + xi_f*(perm_f - data.perm_res);
+					const double K_eff = perm_eff/data.fluid_viscosity;
 
-					K_eff = std::max(data.perm_res/data.fluid_viscosity, K_eff);
-
-					double source_term = 0;
-					for (unsigned int k=0; k<data.wells.size(); ++k)
-						source_term += data.wells[k]->value(quadrature_points[q], 0);
+					// K_eff = std::max(data.perm_res/data.fluid_viscosity, K_eff);
 
 					// if (source_term > 0)
 					// 	pcout << "source " << source_term << std::endl;
@@ -328,7 +362,7 @@ namespace FluidSolvers
 								;
 
 							double m_f =
-								data.fracture_compressibility *
+								data.fluid_compressibility *
 								xi_p[j]/time_step*xi_p[i]
 								+
 								K_eff*grad_xi_p[j]*grad_xi_p[i]
@@ -357,7 +391,7 @@ namespace FluidSolvers
 							;
 
 						double rhs_f =
-							data.fracture_compressibility *
+							data.fluid_compressibility *
 							old_p_values[q]/time_step*xi_p[i]
 							// +
 							// Keff *
@@ -370,7 +404,6 @@ namespace FluidSolvers
 
 							local_rhs[i] += (xi_r*rhs_r + xi_f*rhs_f)*fe_values.JxW(q);
 					}  // end i loop
-
 				}  // end q-point loop
 
 	      cell->get_dof_indices(local_dof_indices);
@@ -383,6 +416,9 @@ namespace FluidSolvers
 
     system_matrix.compress(VectorOperation::add);
     rhs_vector.compress(VectorOperation::add);
+    // Just checking
+    test_flow_rate = Utilities::MPI::sum(test_flow_rate, mpi_communicator);
+    // pcout << "Total flux " << test_flow_rate << std::endl;
 		// pcout << "norm " << rhs_vector.l2_norm() << std::endl;
 
 		computing_timer.exit_section();
@@ -411,12 +447,12 @@ namespace FluidSolvers
 	}
 
 
-	template <int dim> double
+	template <int dim> unsigned int
 	PressureSolver<dim>::solve()
 	{
   	computing_timer.enter_section("Solve pressure system");
   	const unsigned int max_iter = system_matrix.m();
-		const double tol = 1e-10*rhs_vector.l2_norm();
+		const double tol = 1e-10 + 1e-10*rhs_vector.l2_norm();
 		SolverControl solver_control(max_iter, tol);
 		TrilinosWrappers::SolverCG solver(solver_control);
 

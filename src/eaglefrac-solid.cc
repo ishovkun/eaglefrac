@@ -53,6 +53,7 @@ namespace EagleFrac
     std::string input_file_name, case_name;
 
 		std::vector< std::pair<double,std::string> > times_and_names;
+    std::vector< Vector<double> > stresses;
   };
 
 
@@ -101,6 +102,9 @@ namespace EagleFrac
     for (int i=0; i<n_displacement_conditions; ++i)
       displacement_values[i] = data.displacement_boundary_velocities[i]*time;
 
+    // if (time >= 54)
+    //   displacement_values[0] = data.displacement_boundary_velocities[0]*54;
+
     int n_displacement_node_conditions = data.displacement_points.size();
     std::vector<double> displacement_point_values(n_displacement_node_conditions);
     for (int i=0; i<n_displacement_node_conditions; ++i)
@@ -119,6 +123,20 @@ namespace EagleFrac
 
 
   template <int dim>
+  void PDSSolid<dim>::setup_dofs()
+  {
+    phase_field_solver.setup_dofs();
+
+    // Setup container for stresses
+    if (stresses.size() != dim)
+      stresses.resize(dim);
+    for (int i=0; i<dim; ++i)
+			stresses[i].reinit(triangulation.n_active_cells());
+
+  }  // eom
+
+
+  template <int dim>
   void PDSSolid<dim>::exectute_adaptive_refinement()
   {
     phase_field_solver.relevant_solution = phase_field_solver.solution;
@@ -133,7 +151,7 @@ namespace EagleFrac
     solution_transfer.prepare_for_coarsening_and_refinement(tmp);
     triangulation.execute_coarsening_and_refinement();
 
-    phase_field_solver.setup_dofs();
+    setup_dofs();
 
     TrilinosWrappers::MPI::BlockVector
       tmp_owned1(phase_field_solver.owned_partitioning, mpi_communicator),
@@ -209,7 +227,8 @@ namespace EagleFrac
     pcout << "min mesh size " << minimum_mesh_size << std::endl;
 
     triangulation.refine_global(data.initial_refinement_level);
-  	phase_field_solver.setup_dofs();
+  	// phase_field_solver.setup_dofs();
+    setup_dofs();
 
     // local prerefinement
 		for (int ref_step=0; ref_step<data.n_adaptive_steps; ++ref_step)
@@ -218,7 +237,7 @@ namespace EagleFrac
 	    Mesher::refine_region(triangulation,
 	                          data.local_prerefinement_region,
 	                          1);
-    	phase_field_solver.setup_dofs();
+    	setup_dofs();
 		}
 
     // set initial phase-field to 1
@@ -237,7 +256,6 @@ namespace EagleFrac
       time_step_number++;
 
       phase_field_solver.update_old_solution();
-      std::pair<double,double> time_steps = std::make_pair(time_step, old_time_step);
 
     redo_time_step:
       pcout << std::endl
@@ -247,6 +265,16 @@ namespace EagleFrac
 						<< time_step
             << std::endl;
 
+      // double G_c = 31;
+      // double tcrit = 54;
+      // if (time >= tcrit)
+      //   {
+      //     G_c = 31. - 1*(time-tcrit);
+      //     phase_field_solver.use_old_time_step_phi = true;
+      //   }
+      // data.get_fracture_toughness = new ConstantFunction<dim>(G_c, 1);
+
+      std::pair<double,double> time_steps = std::make_pair(time_step, old_time_step);
     	impose_displacement_on_solution(time);
 
       IndexSet old_active_set(phase_field_solver.active_set);
@@ -448,6 +476,10 @@ namespace EagleFrac
 															 triangulation, gc_vector);
 	  	data_out.add_data_vector(gc_vector, "toughness");
 		}
+
+    phase_field_solver.get_stresses(stresses);
+    data_out.add_data_vector(stresses[0], "sigma_xx");
+    data_out.add_data_vector(stresses[1], "sigma_yy");
 
     data_out.build_patches();
 

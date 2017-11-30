@@ -1,7 +1,8 @@
 #pragma once
 #include <deal.II/base/function_parser.h>
 
-#include <InputData.hpp>
+// #include <InputData.hpp>
+#include <SinglePhaseData.hpp>
 
 namespace InputData
 {
@@ -9,7 +10,8 @@ namespace InputData
 
 
 	template <int dim>
-	class PhaseFieldPressurizedData : public PhaseFieldSolidData<dim>
+	// class PhaseFieldPressurizedData : public PhaseFieldSolidData<dim>
+	class PhaseFieldPressurizedData : public SinglePhaseData<dim>
 	{
 	public:
 		PhaseFieldPressurizedData(ConditionalOStream &pcout_);
@@ -33,7 +35,8 @@ namespace InputData
 	PhaseFieldPressurizedData<dim>::
 	PhaseFieldPressurizedData(ConditionalOStream &pcout_)
 	:
-	PhaseFieldSolidData<dim>(pcout_),
+	// PhaseFieldSolidData<dim>(pcout_),
+    SinglePhaseData<dim>(pcout_),
 	pressure_function(1)
 	{
 		declare_parameters();
@@ -107,6 +110,8 @@ namespace InputData
       this->prm.declare_entry("Minimum time step", "1e-9", Patterns::Double());
       this->prm.declare_entry("Newton tolerance", "1e-9", Patterns::Double());
       this->prm.declare_entry("Max Newton steps", "20", Patterns::Integer());
+      this->prm.declare_entry("Level set constant", "0.1", Patterns::Double());
+      this->prm.declare_entry("Penalty theta", "1000", Patterns::Double());
       this->prm.leave_subsection();
     }
     {
@@ -156,17 +161,7 @@ namespace InputData
 	    this->displacement_boundary_components =
 	      Parsers::parse_string_list<int>(this->prm.get("Displacement boundary components"));
 	    this->displacement_boundary_values =
-	      Parsers::parse_string_list<double>(this->prm.get("Displacement boundary velocities"));
-	    // this->displacement_boundary_velocities =
-	    //   parse_string_list<double>(this->prm.get("Displacement boundary velocities"));
-	    // this->displacement_points =
-	    //   parse_point_list<dim>(this->prm.get("Displacement points"));
-	    // this->displacement_point_components =
-	    //   parse_string_list<int>(this->prm.get("Displacement point components"));
-	    // this->displacement_point_velocities =
-	    //   parse_string_list<double>(this->prm.get("Displacement point velocities"));
-	    // this->constraint_point_phase_field =
-	    //   parse_string_list<bool>(this->prm.get("Constraint point phase field"));
+	      Parsers::parse_string_list<double>(this->prm.get("Displacement boundary values"));
 	    this->prm.leave_subsection();
 	  }
 		{ // initial conditions
@@ -263,6 +258,10 @@ namespace InputData
 	    this->minimum_time_step = this->prm.get_double("Minimum time step");
 	    this->newton_tolerance = this->prm.get_double("Newton tolerance");
 	    this->max_newton_iter = this->prm.get_integer("Max Newton steps");
+      this->constant_level_set = this->prm.get_double("Level set constant");
+      AssertThrow(this->constant_level_set < this->phi_refinement_value,
+                  ExcMessage("Level set constant should be > phi refinement constant"));
+      this->penalty_theta = this->prm.get_integer("Penalty theta");
 	    this->prm.leave_subsection();
 	  }
 	  { // Postprocessing

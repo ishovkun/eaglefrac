@@ -16,6 +16,10 @@ ADD_LIBRARY(lib
   Well.hpp
   Scheduler.hpp
   Parsers.hpp
+  TemperatureSolver.hpp
+  FEFunction.hpp
+  WidthSolver.hpp
+  DecompositionHeister.hpp
 )
 
 DEAL_II_SETUP_TARGET(lib)

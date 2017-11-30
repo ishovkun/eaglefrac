@@ -3,7 +3,7 @@
 subsection Boundary conditions
   set Displacement boundary labels     = 0, 1, 2, 3
   set Displacement boundary components = 0, 0, 1, 1
-  set Displacement boundary velocities = 0, 0, 0, 0
+  set Displacement boundary values = 0, 0, 0, 0
 end
 
 
@@ -18,8 +18,8 @@ subsection Equation data
   set Young modulus              = 1e9
   set Poisson ratio              = 0.2
   set Biot coefficient           = 0.0
-  set Regularization epsilon     = 5, 1
-  set Regularization kappa       = 1e-12
+  set Regularization epsilon     = 4, 1
+  set Regularization kappa       = 0e-12
   set Penalization c             = 1e3
   set Uniform Poisson ratio      = true
   set Uniform Young modulus      = true
@@ -30,20 +30,20 @@ end
 
 
 subsection Mesh
-  set Level set constant = 0.2
   set Initial global refinement steps = 4
-  set Local refinement region         = 14, 26, 18.0, 22.0
-  set Adaptive steps                  = 7
-  set Adaptive phi value              = 0.9
+  set Local refinement region         = 13.5, 26.5, 18.0, 22.0
+  set Adaptive steps                  = 3
+  set Adaptive phi value              = 0.5
   set Mesh file                       = input/40x40.msh
 end
 
 
 subsection Solver
+  set Level set constant = 0.1
   set Time stepping table = (0, 1e-2);
   set Max Newton steps  = 100
   set Minimum time step = 1e-9
-  set Newton tolerance  = 1e-7
+  set Newton tolerance  = 1e-5
   set T max             = 1e-2
 end
 

@@ -34,6 +34,7 @@
 #include <ConstitutiveModel.hpp>
 #include <InputData.hpp>
 #include <LinearSolver.hpp>
+#include <DecompositionHeister.hpp>
 
 
 namespace PhaseField
@@ -99,6 +100,7 @@ public:
 		           			const FESystem<dim>   					 &,
 							 			const FEValuesExtractors::Scalar &);
 	double linear_residual(TrilinosWrappers::MPI::BlockVector &);
+  void get_stresses(std::vector< Vector<double> > &dst);
 
 private:
 	// this function also computes finest mesh size
@@ -157,8 +159,13 @@ private:
 	                                   relevant_solution;
 	TrilinosWrappers::MPI::BlockVector owned_storage_vector;
 	TrilinosWrappers::MPI::BlockVector rhs_vector;
-	ConstraintMatrix physical_constraints, all_constraints, hanging_nodes_constraints;
+	ConstraintMatrix physical_constraints, all_constraints,
+                   hanging_nodes_constraints;
 	bool use_old_time_step_phi;
+  // How to dicompose stress
+  // No splitting: 0
+  // Simple splitting: 1
+  // Spectral decomposition: 2
 	int  decompose_stress;
 
 };
@@ -295,6 +302,10 @@ void PhaseFieldSolver<dim>::setup_dofs()
                                     hanging_nodes_constraints,
                                     /*  keep_constrained_dofs = */ false,
                                     Utilities::MPI::this_mpi_process(mpi_communicator));
+    // DoFTools::make_sparsity_pattern(dof_handler, sp,
+    //                                 hanging_nodes_constraints,
+    //                                 false,
+    //                                 Utilities::MPI::this_mpi_process(mpi_communicator));
     sp.compress();
     system_matrix.reinit(sp);
 
@@ -382,22 +393,36 @@ assemble_coupled_system(const TrilinosWrappers::MPI::BlockVector &linerarization
   else
     computing_timer.enter_section("Assemble nonlinear residual");
 
-  const QGauss<dim> quadrature_formula(fe.degree+2);
+  const QGauss<dim> quadrature_formula(fe.degree + 2);
+  const QGauss<dim-1> face_quadrature_formula(fe.degree + 1);
   FEValues<dim> fe_values(fe, quadrature_formula,
                           update_values | update_gradients |
                           update_quadrature_points |
                           update_JxW_values);
+  FEFaceValues<dim> fe_face_values(fe, face_quadrature_formula,
+                                   update_values | update_gradients |
+                                   update_normal_vectors |
+                                   update_JxW_values);
 
 	// dummy unless include_pressure=true
 	FEValues<dim> *p_pressure_fe_values = NULL;
+  FEFaceValues<dim> *p_pressure_fe_face_values = NULL;
 	if (include_pressure)
+  {
     p_pressure_fe_values = new FEValues<dim>(*p_pressure_fe, quadrature_formula,
 	                     											 update_values | update_gradients |
 																						 update_quadrature_points);
-  auto & pressure_fe_values	= (*p_pressure_fe_values);
+    p_pressure_fe_face_values = new FEFaceValues<dim>(*p_pressure_fe,
+                                                      face_quadrature_formula,
+                                                      update_values);
+  }
 
-  const unsigned int dofs_per_cell = fe.dofs_per_cell;
-  const unsigned int n_q_points    = quadrature_formula.size();
+  auto & pressure_fe_values	= (*p_pressure_fe_values);
+  // auto & pressure_fe_face_values	= (*p_pressure_fe_face_values);
+
+  const unsigned int dofs_per_cell   = fe.dofs_per_cell;
+  const unsigned int n_q_points      = quadrature_formula.size();
+  const unsigned int n_face_q_points = face_quadrature_formula.size();
 
   FullMatrix<double>   local_matrix(dofs_per_cell, dofs_per_cell);
   Vector<double>       local_rhs(dofs_per_cell);
@@ -415,14 +440,17 @@ assemble_coupled_system(const TrilinosWrappers::MPI::BlockVector &linerarization
   std::vector< Tensor<2,dim> >  eps_u(dofs_per_cell);
   // Solution values containers
   std::vector<double> 					phi_values(n_q_points),
+                                old_phi_face_values(n_face_q_points),
 						  									old_phi_values(n_q_points),
 						  									old_old_phi_values(n_q_points);
-  std::vector< Tensor<1, dim> > u_values(n_q_points);
+  std::vector< Tensor<1, dim> > u_values(n_q_points),
+                                u_face_values(n_face_q_points);
   std::vector< Tensor<2, dim> > grad_u_values(n_q_points);
   std::vector< Tensor<1,dim> >  grad_phi_values(n_q_points);
   Tensor<2, dim> 								strain_tensor_value;
   // Pressure solution containers
 	std::vector<double> 				  p_values(n_q_points);
+	std::vector<double> 				  p_face_values(n_face_q_points);
 	std::vector< Tensor<1,dim> >  grad_p_values(n_q_points);
 
   // Stress decomposition containers
@@ -431,6 +459,9 @@ assemble_coupled_system(const TrilinosWrappers::MPI::BlockVector &linerarization
   std::vector< Tensor<2, dim> >
   	sigma_u_plus(dofs_per_cell),
   	sigma_u_minus(dofs_per_cell);
+  Tensor<2,dim> zero_matrix;
+  zero_matrix.clear();
+  // zero_matrix = 0;
 
   // Equation data
   double kappa = data.regularization_parameter_kappa;
@@ -514,18 +545,36 @@ assemble_coupled_system(const TrilinosWrappers::MPI::BlockVector &linerarization
 	                                                      stress_tensor_plus,
 	                                                      stress_tensor_minus);
 				else if (decompose_stress == 2) // Spectral decomposition
-	        stress_decomposition.stress_spectral_decomposition(strain_tensor_value,
-	                                                           lame_constant,
-	                                                           shear_modulus,
-	                                                           stress_tensor_plus,
-	                                                           stress_tensor_minus);
+        {
+          // Decomposition::decompose_stress(stress_tensor_plus, stress_tensor_minus,
+          //                                 strain_tensor_value, trace(strain_tensor_value),
+          //                                 zero_matrix , 0.0,
+          //                                 lame_constant, shear_modulus, false);
+          // pcout << "stress tensor plus_1 " << stress_tensor_plus << std::endl;
+          stress_decomposition.stress_spectral_decomposition(strain_tensor_value,
+                                                             lame_constant,
+                                                             shear_modulus,
+                                                             stress_tensor_plus,
+                                                             stress_tensor_minus);
+          // pcout << "stress tensor plus_2 " << stress_tensor_plus << std::endl;
+        }
 
         // we get nans at the first time step
         if (!numbers::is_finite(trace(stress_tensor_plus)))
+        // if (!numbers::is_finite(stress_tensor_plus.norm()))
 				{
-					stress_decomposition.get_stress(strain_tensor_value, lame_constant,
-							 													  shear_modulus, stress_tensor_plus);
-					stress_tensor_minus = 0;
+          if (decompose_stress > 0)
+            stress_decomposition.get_stress_decomposition(strain_tensor_value,
+                                                          lame_constant,
+                                                          shear_modulus,
+                                                          stress_tensor_plus,
+                                                          stress_tensor_minus);
+          else
+          {
+            stress_decomposition.get_stress(strain_tensor_value, lame_constant,
+                                            shear_modulus, stress_tensor_plus);
+            stress_tensor_minus = 0;
+          }
 				}
 
         double old_phi_value = old_phi_values[q];
@@ -550,7 +599,10 @@ assemble_coupled_system(const TrilinosWrappers::MPI::BlockVector &linerarization
 					if (include_pressure)
 						xi_u[k] = fe_values[displacement].value(k,q);
 
-          if (assemble_matrix)
+          const unsigned int comp_k = fe.system_to_component_index(k).first;
+          sigma_u_plus[k] = 0;
+          sigma_u_minus[k] = 0;
+          if (assemble_matrix && comp_k != dim)
           {
 						if (decompose_stress == 0) // No decomposition
 						{
@@ -568,14 +620,32 @@ assemble_coupled_system(const TrilinosWrappers::MPI::BlockVector &linerarization
                  sigma_u_plus[k], sigma_u_minus[k]);
 						}
 						else if (decompose_stress == 2) // Spectral decomposition
+            {
+              // Decomposition::decompose_stress(sigma_u_plus[k], sigma_u_minus[k],
+              //                                 strain_tensor_value, trace(strain_tensor_value),
+              //                                 eps_u[k], trace(eps_u[k]),
+              //                                 lame_constant, shear_modulus, true);
+              // if (!numbers::is_nan(sigma_u_plus[k][0][0]))
+              // {
+              //   pcout << "\nstress tensor+ " << stress_tensor_plus << std::endl;
+              //   pcout << "sigma u plus_1 " << sigma_u_plus[k] << std::endl;
+              //   pcout << "sigma u minus_1 " << sigma_u_minus[k] << std::endl;
+              // }
 	            stress_decomposition.stress_spectral_decomposition_derivatives
 	              (strain_tensor_value, eps_u[k],
 	               lame_constant, shear_modulus,
 	               sigma_u_plus[k], sigma_u_minus[k]);
+              // if (!numbers::is_nan(sigma_u_plus[k][0][0]))
+              // {
+              //   pcout << "sigma u plus_2 " << sigma_u_plus[k] << std::endl;
+              //   pcout << "sigma u minus_2 " << sigma_u_minus[k] << std::endl;
+              // }
+            }
 
             // we get nans at the first time step
             // simple splitting
             if (!numbers::is_finite(trace(sigma_u_plus[k])))
+            // if (!numbers::is_finite(sigma_u_plus[k].norm()))
 						{
 							stress_decomposition.get_stress(eps_u[k], lame_constant,
 							 																shear_modulus, sigma_u_plus[k]);
@@ -589,11 +659,11 @@ assemble_coupled_system(const TrilinosWrappers::MPI::BlockVector &linerarization
         {
           double rhs_u =
             ((1.-kappa)*phi_tilda*phi_tilda + kappa) *
-            scalar_product(stress_tensor_plus, eps_u[i])
-            // scalar_product(stress_tensor_plus, grad_xi_u[i])
+            // scalar_product(stress_tensor_plus, eps_u[i])
+            scalar_product(stress_tensor_plus, grad_xi_u[i])
             +
-						scalar_product(stress_tensor_minus, eps_u[i])
-            // scalar_product(stress_tensor_minus, grad_xi_u[i])
+						// scalar_product(stress_tensor_minus, eps_u[i])
+            scalar_product(stress_tensor_minus, grad_xi_u[i])
 						;
 				  if (include_pressure)
 						rhs_u +=
@@ -635,11 +705,11 @@ assemble_coupled_system(const TrilinosWrappers::MPI::BlockVector &linerarization
             {
               double m_u_u =
                 ((1.-kappa)*phi_tilda*phi_tilda + kappa) *
-                scalar_product(sigma_u_plus[j], eps_u[i])
-                // scalar_product(sigma_u_plus[j], grad_xi_u[i])
+                // scalar_product(sigma_u_plus[j], eps_u[i])
+                scalar_product(sigma_u_plus[j], grad_xi_u[i])
                 +
-								scalar_product(sigma_u_minus[j], eps_u[i])
-                // scalar_product(sigma_u_minus[j], grad_xi_u[i])
+								// scalar_product(sigma_u_minus[j], eps_u[i])
+                scalar_product(sigma_u_minus[j], grad_xi_u[i])
 								;
 
               double m_phi_u =
@@ -698,6 +768,9 @@ assemble_coupled_system(const TrilinosWrappers::MPI::BlockVector &linerarization
         hanging_nodes_constraints.distribute_local_to_global(local_rhs,
                                                              local_dof_indices,
                                                              residual);
+        // all_constraints.distribute_local_to_global(local_rhs,
+        //                                            local_dof_indices,
+        //                                            residual);
 
     } // end of cell loop
 
@@ -715,7 +788,9 @@ assemble_coupled_system(const TrilinosWrappers::MPI::BlockVector &linerarization
     setup_preconditioners();
 
   delete p_pressure_fe_values;
+  delete p_pressure_fe_face_values;
 }  // eom
+
 
 template <int dim>
 void PhaseFieldSolver<dim>::
@@ -808,7 +883,6 @@ compute_active_set(TrilinosWrappers::MPI::BlockVector &linerarization_point)
   all_constraints.reinit(locally_relevant_dofs);
 
   std::vector<bool> dof_touched(dof_handler.n_dofs(), false);
-
   const unsigned int dofs_per_cell = fe.dofs_per_cell;
   std::vector<types::global_dof_index> local_dof_indices(dofs_per_cell);
 
@@ -888,7 +962,7 @@ solve_newton_step(const std::pair<double,double> &time_steps)
 		owned_storage_vector = solution;
     double old_error = compute_nonlinear_residual(solution, time_steps);
     const int max_steps = 10;
-    double damping = 0.6;
+    const double damping = 0.6;
 		unsigned int n_steps = 0;
     for (int step = 0; step < max_steps; ++step)
     {
@@ -897,6 +971,7 @@ solve_newton_step(const std::pair<double,double> &time_steps)
       compute_nonlinear_residual(solution, time_steps);
       all_constraints.set_zero(residual);
       double error = residual.l2_norm();
+      // double error = residual.linfty_norm();
 
       if (error < old_error)
         break;
@@ -932,7 +1007,7 @@ solve_coupled_newton_step(const TrilinosWrappers::MPI::BlockVector &pressure_sol
 	owned_storage_vector = solution;
 
   const int max_steps = 10;
-  double damping = 0.6;
+  const double damping = 0.6;
 	unsigned int n_steps = 0;
   for (int step = 0; step < max_steps; ++step)
   {
@@ -986,6 +1061,7 @@ compute_nonlinear_residual(const TrilinosWrappers::MPI::BlockVector &linerarizat
 {
   assemble_system(linerarization_point, time_steps, false);
   return residual.l2_norm();
+  // return residual.linfty_norm();
 }    // EOM
 
 
@@ -1001,6 +1077,7 @@ template <int dim>
 double PhaseFieldSolver<dim>::residual_norm() const
 {
   return residual.l2_norm();
+  // return residual.linfty_norm();
 }    // eom
 
 
@@ -1259,12 +1336,89 @@ unsigned int PhaseFieldSolver<dim>::solve()
 }    // EOM
 
 
-template <int dim>
-double
-PhaseFieldSolver<dim>::
-linear_residual(TrilinosWrappers::MPI::BlockVector &dst)
-{
-	return system_matrix.residual(dst, solution_update, rhs_vector);
-}
+  template <int dim>
+  double
+  PhaseFieldSolver<dim>::
+  linear_residual(TrilinosWrappers::MPI::BlockVector &dst)
+  {
+    return system_matrix.residual(dst, solution_update, rhs_vector);
+  }
+
+  // template <int dim>
+  // inline void
+  // distribute_local_to_global(const Tensor<2, dim>a &cell_tensor,
+  //                            const unsigned int cell_index,
+  //                            std::vector< std::vector<double> > &dst)
+  // {
+  //   dst[0][idx] = cell_tensor[0][0];
+  // }
+
+
+  template <int dim>
+  void
+  PhaseFieldSolver<dim>::
+  get_stresses(std::vector< Vector<double> > &dst)
+  {
+		AssertThrow(dst.size() == dim,
+						 		ExcDimensionMismatch(dst.size(), dim));
+
+    // for (unsigned int i=0; i<dim; ++i)
+    //   AssertThrow(dst[i].size() == triangulation.n_active_cells(),
+    //               ExcDimensionMismatch(dst[i].size(),
+    //                                    triangulation.n_active_cells()));
+
+
+    const QGauss<dim> quadrature_formula(fe.degree+2);
+    FEValues<dim> fe_values(fe, quadrature_formula,
+                            update_values | update_gradients);
+
+    const unsigned int n_q_points    = quadrature_formula.size();
+    const FEValuesExtractors::Vector displacement(0);
+    const FEValuesExtractors::Scalar phase_field(dim);
+
+    std::vector<double> 					phi_values(n_q_points);
+    std::vector< Tensor<2, dim> > grad_u_values(n_q_points);
+    Tensor<2, dim> strain_tensor_value, stress_tensor_value, cell_stress_tensor;
+    ConstitutiveModel::EnergySpectralDecomposition<dim> stress_decomposition;
+
+    typename DoFHandler<dim>::active_cell_iterator
+      cell = dof_handler.begin_active(),
+      endc = dof_handler.end();
+
+    relevant_solution = solution;
+    unsigned int idx = 0;
+
+    for (; cell!=endc; ++cell)
+    {
+      if (!cell->is_artificial())
+      {
+        fe_values.reinit(cell);
+        fe_values[displacement].get_function_gradients(relevant_solution,
+                                                       grad_u_values);
+        fe_values[phase_field].get_function_values(relevant_solution,
+                                                   phi_values);
+        cell_stress_tensor = 0;
+        double E = data.get_young_modulus->value(cell->center(), 0);
+        double nu = data.get_poisson_ratio->value(cell->center(), 0);
+        double lame_constant = E*nu/((1.+nu)*(1.-2*nu));
+        double shear_modulus = 0.5*E/(1.+nu);
+
+        for (unsigned int q=0; q<n_q_points; ++q)
+        {
+          strain_tensor_value = 0.5*(grad_u_values[q] + transpose(grad_u_values[q]));
+          stress_decomposition.get_stress(strain_tensor_value, lame_constant,
+                                          shear_modulus, stress_tensor_value);
+          cell_stress_tensor += phi_values[q]*stress_tensor_value;
+        }
+
+        for (unsigned int d=0; d<dim; ++d)
+          dst[d][idx] = cell_stress_tensor[d][d];
+
+      } // end if not artificial
+
+      idx++;
+
+    }  // end cell loop
+  }  // eom
 
 }  // end of namespace

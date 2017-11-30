@@ -15,12 +15,15 @@
 // Custom modules
 #include <SinglePhaseData.hpp>
 #include <PhaseFieldSolver.hpp>
+#include <TemperatureSolver.hpp>
+// TemperatureSolver.cpp
+
 #include <PressureSolver.hpp>
-#include <WidthSolver.hpp>
 #include <Postprocessing.hpp>
 #include <InitialValues.hpp>
 #include <Mesher.hpp>
 #include <Well.hpp>
+#include <FEFunction.hpp>
 
 
 namespace EagleFrac
@@ -40,14 +43,14 @@ namespace EagleFrac
     void create_mesh();
     void read_mesh();
     void setup_dofs();
-    void impose_displacement_on_solution(const double mult = 1);
+    void impose_displacement_on_solution();
     void output_results(int time_step_number, double time); //const;
     void refine_mesh();
-    void compute_permeability();
     void execute_postprocessing(const double time);
     void exectute_adaptive_refinement();
     void prepare_output_directories();
 		void print_header();
+    void compute_fracture_toughness();
 		double 	compute_fss_error(
 			const TrilinosWrappers::MPI::BlockVector &solid_solution,
 			const TrilinosWrappers::MPI::BlockVector &pressure_solution,
@@ -65,18 +68,19 @@ namespace EagleFrac
     ConditionalOStream pcout;
     TimerOutput computing_timer;
 
-    InputData::SinglePhaseData<dim>   data;
+    InputData::SinglePhaseData<dim> data;
     PhaseField::PhaseFieldSolver<dim> phase_field_solver;
-    PhaseField::WidthSolver<dim>      width_solver;
 		FluidSolvers::PressureSolver<dim> pressure_solver;
+    FluidSolvers::TemperatureSolver<dim> temperature_solver;
+
+    Vector<double>  fracture_toughness;
 
     std::string input_file_name, case_name;
 
 		// this object contains time records for output
 		// this allows having a real time value in Paraview
 		std::vector< std::pair<double,std::string> > times_and_names;
-    std::vector< Vector<double> > stresses;
-    Vector<double> permeability;
+
   };
 
 
@@ -98,16 +102,13 @@ namespace EagleFrac
     phase_field_solver(mpi_communicator,
                        triangulation, data,
                        pcout, computing_timer),
-    width_solver(mpi_communicator,
-                 triangulation,
-                 data,
-                 phase_field_solver.dof_handler,
-                 pcout, computing_timer),
     pressure_solver(mpi_communicator,
 										triangulation, data,
-										phase_field_solver.dof_handler,
-                    width_solver.get_dof_handler(),
+										phase_field_solver.dof_handler, phase_field_solver.fe,
 										pcout, computing_timer),
+    temperature_solver(mpi_communicator, triangulation, data,
+                       phase_field_solver.dof_handler, phase_field_solver.fe,
+                       pcout, computing_timer),
     input_file_name(input_file_name_)
   {}
 
@@ -128,14 +129,14 @@ namespace EagleFrac
   }
 
   template <int dim>
-  void SinglePhaseModel<dim>::impose_displacement_on_solution(const double mult)
+  void SinglePhaseModel<dim>::impose_displacement_on_solution()
   {
 		// pcout << data.displacement_boundary_labels.size() << std::endl;
 		// pcout << data.displacement_boundary_values.size() << std::endl;
     int n_displacement_conditions = data.displacement_boundary_labels.size();
     std::vector<double> displacement_values(n_displacement_conditions);
     for (int i=0; i<n_displacement_conditions; ++i)
-      displacement_values[i] = data.displacement_boundary_values[i]*mult;
+      displacement_values[i] = data.displacement_boundary_values[i];
 
     std::vector<double> displacement_point_values(0);
     phase_field_solver.impose_displacement(data.displacement_boundary_labels,
@@ -161,14 +162,21 @@ namespace EagleFrac
     tmp_pressure[0] = &pressure_solver.relevant_solution;
     tmp_pressure[1] = &pressure_solver.old_solution;
 
+    std::vector<const TrilinosWrappers::MPI::BlockVector *> tmp_temperature(1);
+    tmp_pressure[0] = &temperature_solver.relevant_solution;
+
     parallel::distributed::SolutionTransfer<dim, TrilinosWrappers::MPI::BlockVector>
         solution_transfer(phase_field_solver.dof_handler);
 
     parallel::distributed::SolutionTransfer<dim, TrilinosWrappers::MPI::BlockVector>
         solution_transfer_pressure(pressure_solver.get_dof_handler());
 
+    parallel::distributed::SolutionTransfer<dim, TrilinosWrappers::MPI::BlockVector>
+      solution_transfer_temperature(temperature_solver.get_dof_handler());
+
     solution_transfer.prepare_for_coarsening_and_refinement(tmp);
     solution_transfer_pressure.prepare_for_coarsening_and_refinement(tmp_pressure);
+    solution_transfer_temperature.prepare_for_coarsening_and_refinement(tmp_temperature);
     triangulation.execute_coarsening_and_refinement();
 
 		setup_dofs();
@@ -179,8 +187,11 @@ namespace EagleFrac
 
     TrilinosWrappers::MPI::BlockVector
       tmp_pressure_owned(pressure_solver.owned_partitioning, mpi_communicator);
-      // tmp_pressure_owned2(pressure_solver.owned_partitioning, mpi_communicator);
 
+    // TrilinosWrappers::MPI::BlockVector
+    //   tmp_temperature_owned(temperature_solver.owned_partitioning, mpi_communicator);
+
+    // define containers that contain vectors into which interpolation is made
     std::vector<TrilinosWrappers::MPI::BlockVector *> tmp1(3);
     tmp1[0] = &phase_field_solver.solution;
     tmp1[1] = &tmp_owned1;
@@ -190,8 +201,13 @@ namespace EagleFrac
     tmp1_pressure[0] = &pressure_solver.solution;
     tmp1_pressure[1] = &tmp_pressure_owned;
 
+    std::vector<TrilinosWrappers::MPI::BlockVector *> tmp1_temperature(1);
+    tmp1_temperature[0] = &temperature_solver.solution;
+
+    // Interpolate solution onto new mesh
     solution_transfer.interpolate(tmp1);
     solution_transfer_pressure.interpolate(tmp1_pressure);
+    solution_transfer_temperature.interpolate(tmp1_temperature);
 
     phase_field_solver.old_solution = tmp_owned1;
     phase_field_solver.old_old_solution = tmp_owned2;
@@ -199,6 +215,7 @@ namespace EagleFrac
 		pressure_solver.old_solution = tmp_pressure_owned;
 		pressure_solver.relevant_solution = pressure_solver.solution;
 
+    temperature_solver.relevant_solution = temperature_solver.solution;
   }  // eom
 
 
@@ -245,20 +262,16 @@ namespace EagleFrac
 		computing_timer.enter_section("Setup full system");
 
 		phase_field_solver.setup_dofs();
-    width_solver.setup_dofs();
 		pressure_solver.setup_dofs();
+    temperature_solver.setup_dofs();
 
-    // Setup container for stresses
-    if (stresses.size() != dim)
-      stresses.resize(dim);
-    for (int i=0; i<dim; ++i)
-			stresses[i].reinit(triangulation.n_active_cells());
-
-    permeability.reinit(triangulation.n_active_cells());
-    // Use when wells are located in cell  centers
+    // fracture_toughness.reinit(temperature_solver.owned_partitioning,
+    //                           mpi_communicator);
+    fracture_toughness.reinit(triangulation.n_active_cells());
 		// auto & pressure_dof_handler = pressure_solver.get_dof_handler();
-		// for (unsigned int w=0; w<data.wells.size(); ++w)
-		// 	data.wells[w]->locate(pressure_dof_handler, mpi_communicator);
+		for (unsigned int w=0; w<data.wells.size(); ++w)
+			data.wells[w]->locate(pressure_solver.get_dof_handler(),
+                            mpi_communicator);
 
   	computing_timer.exit_section();
 	} // eom
@@ -276,96 +289,27 @@ namespace EagleFrac
 	}
 
 
-  template <int dim>
-  void SinglePhaseModel<dim>::compute_permeability()
+  double mapping(const double value)
   {
-    const auto & dof_handler_width = width_solver.get_dof_handler();
-    const auto & dof_handler_solid = phase_field_solver.dof_handler;
-    const auto & fe_width = dof_handler_width.get_fe();
-    const auto & fe_solid = dof_handler_solid.get_fe();
-
-  	const QGauss<dim> quadrature_formula(1);
-  	FEValues<dim> fe_values_solid(fe_solid, quadrature_formula,
-                                  update_values);
-  	FEValues<dim> fe_values_width(fe_width, quadrature_formula,
-                          				update_values);
-
-	  const unsigned int n_q_points    = quadrature_formula.size();
-  	std::vector<double>  				 phi_values(n_q_points);
-  	std::vector<double>  				 width_values(n_q_points);
-
-		const FEValuesExtractors::Scalar phase_field(dim);
-
-	  typename DoFHandler<dim>::active_cell_iterator
-		  cell = dof_handler_width.begin_active(),
-		  cell_solid = dof_handler_solid.begin_active(),
-		  endc = dof_handler_width.end();
-
-    unsigned int cell_ind = 0;
-	  for (; cell!=endc; ++cell, ++cell_solid)
-    {
-      if (!cell->is_artificial())
-      {
-        fe_values_width.reinit(cell);
-        fe_values_solid.reinit(cell_solid);
-	      fe_values_solid[phase_field].
-          get_function_values(phase_field_solver.relevant_solution, phi_values);
-        fe_values_width.get_function_values(width_solver.relevant_solution,
-                                            width_values);
-        // values that separate fracture, reservoir, and cake zone
-        double cx = 0.1;
-        double c1 = 0.5 - cx;
-        double c2 = 0.5 + cx;
-        // Indicator functions
-        double xi_f = (c2 - phi_values[0])/(c2 - c1);
-        // double xi_r = (phi_values[0] - c1)/(c2 - c1);
-        if (phi_values[0] <= c1)
-					{
-						xi_f = 1.0;
-						// xi_r = 0.0;
-					}
-        if (phi_values[0] >= c2)
-					{
-						xi_f = 0.0;
-						// xi_r = 1.0;
-					}
-        double w = std::max(width_values[0], 0.0);  // absolute value
-        double perm_f = 1.0/12.0*w*w;   // fracture perm from lubrication theory
-        // perm_f = 10*data.perm_res;
-        // perm_f = 1e-11;
-        // perm_f = std::max(1e3*data.perm_res, perm_f);
-        perm_f = std::max(1e-11, perm_f);
-        // perm_f = std::max(data.perm_res, perm_f);
-
-        // interpolate pereability
-        double K_eff = (data.perm_res + xi_f*(perm_f - data.perm_res));
-
-        // K_eff = std::max(data.perm_res/data.fluid_viscosity, K_eff);
-        permeability[cell_ind] = K_eff;
-
-      }
-      cell_ind++;
-    }
+    const double min_value = 10, max_value = 5;
+    return (max_value - min_value)*value + min_value;
   }
+
 
   template <int dim>
   void SinglePhaseModel<dim>::run()
   {
     data.read_input_file(input_file_name);
     read_mesh();
-    pcout << "level set constant " << data.constant_level_set << std::endl;
-    pcout << "penalty theta " << data.penalty_theta << std::endl;
-    data.print_parameters();
 
 		auto & pressure_dof_handler = pressure_solver.get_dof_handler();
 		auto & pressure_fe = pressure_solver.get_fe();
+		auto & temperature_dof_handler = temperature_solver.get_dof_handler();
 		// point phase_field_solver to pressure objects
   	const FEValuesExtractors::Scalar pressure_extractor(0);
 		phase_field_solver.set_coupling(pressure_dof_handler,
 																		pressure_fe,
 																		pressure_extractor);
-		phase_field_solver.decompose_stress = 2;
-
     prepare_output_directories();
 
     // compute_runtime_parameters
@@ -378,8 +322,8 @@ namespace EagleFrac
     minimum_mesh_size /= std::pow(2, max_refinement_level);
     data.compute_mesh_dependent_parameters(minimum_mesh_size);
 
-		for (unsigned int w=0; w<data.wells.size(); ++w)
-      data.wells[w]->set_location_radius(1*minimum_mesh_size);
+		// for (unsigned int w=0; w<data.wells.size(); ++w)
+		// 	data.wells[w]->set_location_radius(minimum_mesh_size);
 
     pcout << "min mesh size " << minimum_mesh_size << std::endl;
 
@@ -403,110 +347,40 @@ namespace EagleFrac
 			phase_field_solver.dof_handler,
 			 InitialValues::Defects<dim>(data.defect_coordinates,
 																	  // idk why e/2, it just works better
-																	  // data.regularization_parameter_epsilon),
-																	 2*minimum_mesh_size),
-																	 // minimum_mesh_size),
+																	 //  data.regularization_parameter_epsilon/2),
+																	//  2*minimum_mesh_size),
+																	 minimum_mesh_size),
 		   phase_field_solver.solution
 		 );
 
 		phase_field_solver.old_solution = phase_field_solver.solution;
 		pressure_solver.solution = data.init_pressure;
-		pressure_solver.relevant_solution = pressure_solver.solution;
     // phase_field_solver.old_solution.block(1) = phase_field_solver.solution.block(1);
+    temperature_solver.solution = 0.0;
+    temperature_solver.relevant_solution = temperature_solver.solution;
 
-    // double current_pressure = 0;
+    data.get_fracture_toughness =
+      new Functions::FEFunction<dim>(temperature_dof_handler,
+                                     temperature_solver.relevant_solution,
+                                     &mapping);
+
+    // // test fefunction
+    // typename dofhandler<dim>::active_cell_iterator
+    //   cell = temperature_dof_handler.begin_active();
+    // cell++;
+    // std::cout << "Cell center " << cell->center() << std::endl;
+    // if (cell->is_locally_owned())
+    //   std::cout << get_perm->value(cell->center(), 0) << std::endl;
+
+    // return;
+
     double time = 0;
     double time_step = data.get_time_step(time);
     double old_time_step = time_step;
     int time_step_number = 0;
-    // const int n_init_iter = 5000;
-    // for (int init_iter=0; init_iter<n_init_iter; init_iter++)
-    // { // RESERVOIR INITIALIZATION
-    //   // don't solve for pressure - only for displacement with fixed pressure
-    //   double ppp = data.init_pressure/n_init_iter;
-    //   current_pressure += ppp;
-    //   pressure_solver.solution = current_pressure;
-    //   phase_field_solver.update_old_solution();
-    //   pressure_solver.relevant_solution = pressure_solver.solution;
-    //   pcout << std::endl << "Initializing reservoir" << std::endl;
-    //   pcout << "Current pressure "<<current_pressure << std::endl;
-    //   // pcout << std::endl << "init pressure "<<data.init_pressure << std::endl;
 
-    //   IndexSet old_active_set(phase_field_solver.active_set);
-    //   phase_field_solver.use_old_time_step_phi = true;
-    //   std::pair<double,double> time_steps = std::make_pair(0, 0);
-    //   impose_displacement_on_solution();
-
-    //   print_header();
-    //   int pds_step = 0;  // solid system iteration number
-    //   const double newton_tolerance = data.newton_tolerance;
-    //   while (pds_step < data.max_newton_iter)
-    //   {
-    //     pcout << pds_step << "\t";
-
-    //     double error = std::numeric_limits<double>::max();
-    //     if (pds_step > 0)
-    //     {
-    //       // compute residual
-    //       phase_field_solver.assemble_coupled_system(phase_field_solver.solution,
-    //                                                   pressure_solver.relevant_solution,
-    //                                                   time_steps,
-    //                                                   /*include_pressure = */ true,
-    //                                                   /*assemble_matrix = */ false);
-    //       phase_field_solver.compute_active_set(phase_field_solver.solution);
-    //       phase_field_solver.all_constraints.set_zero(phase_field_solver.residual);
-    //       error = phase_field_solver.residual_norm();
-
-    //       // print active set and error
-    //       pcout << phase_field_solver.active_set_size() << "\t";
-    //       std::cout.precision(3);
-    //       pcout << std::scientific << error << "\t";
-    //       std::cout.unsetf(std::ios_base::scientific);
-
-    //       // break condition
-    //       if (phase_field_solver.active_set_changed(old_active_set) &&
-    //           error < newton_tolerance)
-    //       {
-    //         pcout << "PDS Converged!" << std::endl;
-    //         break;
-    //       }
-
-    //       old_active_set = phase_field_solver.active_set;
-    //     }  // end first newton step condition
-
-    //     std::pair<unsigned int, unsigned int> newton_step_results;
-    //     try
-    //     {
-    //       newton_step_results =
-    //         phase_field_solver.solve_coupled_newton_step
-    //           (pressure_solver.relevant_solution, time_steps);
-    //     }
-    //     catch (SolverControl::NoConvergence e)
-    //     {
-    //       computing_timer.exit_section();
-    //       pcout << "linear solver didn't converge!" << std::endl;
-    //       pcout << "Failed to initialize reservoir" << std::endl;
-    //       pcout << "Aborting." << std::endl;
-    //       return;
-    //     }
-    //     phase_field_solver.relevant_solution = phase_field_solver.solution;
-
-    //     pcout << newton_step_results.first << "\t";
-    //     pcout << newton_step_results.second << "\t";
-
-    //     pds_step++;
-
-    //     pcout << std::endl;
-    //   }  // End pds iter
-
-    //   output_results(init_iter, time + init_iter);
-    //   // execute_postprocessing(time);
-    // } // end initialization
-
-    // return;
-    // output_results(time_step_number, time);
-
-    // TRANSIENT SIMULATION
+    // temperature_solver.assemble_system(time_step);
+		//
     while(time < data.t_max)
     {
       time_step = data.get_time_step(time);
@@ -533,10 +407,9 @@ namespace EagleFrac
       impose_displacement_on_solution();
 			data.update_well_controlls(time);
 
-      // return;
-			// pcout << "Flow rate "
-			// 			<< data.wells[0]->value(Point<dim>(2,2), 0)
-			// 			<< std::endl;
+      // double G_c = 10.0-1.0*time;
+      // G_c = std::max(1.0, G_c);
+      // data.get_fracture_toughness = new ConstantFunction<dim>(G_c, 1);
 
       std::pair<double,double> time_steps = std::make_pair(time_step, old_time_step);
 
@@ -544,13 +417,16 @@ namespace EagleFrac
 
 			TrilinosWrappers::MPI::BlockVector pressure_old_iter =
 				pressure_solver.relevant_solution;
+			// TrilinosWrappers::MPI::BlockVector solid_tmp =
+			// 	phase_field_solver.relevant_solution;
 
 			double fss_error = std::numeric_limits<double>::max();
 			unsigned int fss_step = 0;
-		  while (fss_step < data.max_fss_steps)
+		  while (fss_step < 30)
 			{
 				pcout << "-----------------------------------------------" << std::endl;
 				pcout << "FSS iteration " << fss_step << std::endl;
+				// if (time_step_number > 1 || fss_step > 0)
 
 				print_header();
 	      int pds_step = 0;  // solid system iteration number
@@ -600,7 +476,7 @@ namespace EagleFrac
 					catch (SolverControl::NoConvergence e)
 					{
 					  computing_timer.exit_section();
-						pcout << "linear solver didn't converge! "
+						pcout << "linear solver didn't converge!"
 						      << "Adjusting time step to " << time_step/10
 									<< std::endl;
 		        time -= time_step;
@@ -609,12 +485,6 @@ namespace EagleFrac
 		        phase_field_solver.solution = phase_field_solver.old_solution;
 		        phase_field_solver.use_old_time_step_phi = true;
 						pressure_solver.solution = pressure_solver.old_solution;
-            if (time_step < data.minimum_time_step)
-            {
-              pcout << "Time step too small: aborting" << std::endl;
-              std::cout.unsetf(std::ios_base::scientific);
-              throw SolverControl::NoConvergence(-1, -1);
-            }
 		        goto redo_time_step;
 					}
 					phase_field_solver.relevant_solution = phase_field_solver.solution;
@@ -644,7 +514,6 @@ namespace EagleFrac
 	        time += time_step;
 	        phase_field_solver.solution = phase_field_solver.old_solution;
 					pressure_solver.solution = pressure_solver.old_solution;
-          phase_field_solver.relevant_solution = phase_field_solver.solution;
 	        phase_field_solver.use_old_time_step_phi = true;
 	        goto redo_time_step;
 	      }  // end cut time step
@@ -665,26 +534,15 @@ namespace EagleFrac
 	        } // end adaptive refinement
 
 				// if (time_step_number > 1)
-        { // Solve for width
-          phase_field_solver.relevant_solution =
-            phase_field_solver.solution;
-          // width_solver.compute_level_set(phase_field_solver.relevant_solution);
-          width_solver.assemble_system(phase_field_solver.relevant_solution);
-          const unsigned int n_width_iter = width_solver.solve_system();
-          pcout << "Width solve " << n_width_iter << " steps" << std::endl;
-          width_solver.relevant_solution = width_solver.solution;
-        }
 				{ // Solve for pressure
 					pcout << "Pressure solver: ";
 					phase_field_solver.relevant_solution = phase_field_solver.solution;
 					pressure_solver.assemble_system(phase_field_solver.relevant_solution,
 																					phase_field_solver.old_solution,
-                                          width_solver.relevant_solution,
 																					time_step);
 					const unsigned int n_pressure_iter = pressure_solver.solve();
 					pressure_solver.relevant_solution = pressure_solver.solution;
 					pcout << n_pressure_iter << std::endl;
-          pcout << "Pmean " << pressure_solver.solution.mean_value() << std::endl;
 				}
 
 				fss_error = pressure_solver.solution_increment_norm
@@ -713,6 +571,12 @@ namespace EagleFrac
 			}  // end fss iteration
 
       // phase_field_solver.truncate_phase_field();
+      temperature_solver.impose_temperature_values
+        (phase_field_solver.relevant_solution);
+      temperature_solver.assemble_system(time_step);
+      temperature_solver.solve();
+      temperature_solver.relevant_solution = temperature_solver.solution;
+
       output_results(time_step_number, time);
 			execute_postprocessing(time);
 
@@ -720,8 +584,8 @@ namespace EagleFrac
 
       if (time >= data.t_max) break;
     }  // end time loop
-		//
-    // pcout << std::fixed;
+
+    pcout << std::fixed;
     // show timer table in default format
     std::cout.unsetf(std::ios_base::scientific);
   }  // EOM
@@ -925,6 +789,31 @@ namespace EagleFrac
 
 
   template <int dim>
+  void SinglePhaseModel<dim>::compute_fracture_toughness()
+  {
+    const auto & dof_handler = temperature_solver.get_dof_handler();
+    // const auto & fe = dof_handler.get_fe();
+
+    typename DoFHandler<dim>::active_cell_iterator
+		  cell = dof_handler.begin_active(),
+		  endc = dof_handler.end();
+
+    // fracture_toughness = 0;
+    unsigned int idx = 0;
+
+    for (; cell!=endc; ++cell)
+    {
+      if (!cell->is_artificial())
+      {
+        fracture_toughness[idx] =
+          data.get_fracture_toughness->value(cell->center());
+      }
+      idx++;
+    }  // end cell loop
+  } // eom
+
+
+  template <int dim>
   void SinglePhaseModel<dim>::output_results(int time_step_number, double time)
   {
     // Add data vectors to output
@@ -951,27 +840,18 @@ namespace EagleFrac
     for (unsigned int i=0; i<subdomain.size(); ++i)
       subdomain(i) = triangulation.locally_owned_subdomain();
     data_out.add_data_vector(subdomain, "subdomain");
-
 		// Add pressure
 		auto & pressure_dof_handler = pressure_solver.get_dof_handler();
 		data_out.add_data_vector(pressure_dof_handler,
 														 pressure_solver.relevant_solution,
 														 "pressure");
-
-    // Compute and add stresses
-    phase_field_solver.get_stresses(stresses);
-    data_out.add_data_vector(stresses[0], "sigma_xx");
-    data_out.add_data_vector(stresses[1], "sigma_yy");
-
-    // Add width
-		auto & width_dof_handler = width_solver.get_dof_handler();
-		data_out.add_data_vector(width_dof_handler,
-														 width_solver.relevant_solution,
-														 "width");
-    // add material ids
-    // data_out.add_data_vector(width_solver.material_ids, "ID");
-    compute_permeability();
-    data_out.add_data_vector(permeability, "permeability");
+    // Add temperature and fracture toughness
+    compute_fracture_toughness();
+		auto & temperature_dof_handler = temperature_solver.get_dof_handler();
+		data_out.add_data_vector(temperature_dof_handler,
+														 temperature_solver.relevant_solution,
+														 "temp");
+		data_out.add_data_vector(fracture_toughness, "Gc");
 
     data_out.build_patches();
 
@@ -1000,7 +880,7 @@ namespace EagleFrac
                               Utilities::int_to_string(time_step_number,
                                                        n_time_step_digits) +
                               "." +
-                              Utilities::int_to_string (i, n_processor_digits) +
+                              Utilities::int_to_string(i, n_processor_digits) +
                               ".vtu");
         std::string pvtu_filename =
 				  "solution-" +

@@ -4,17 +4,12 @@ This is a C++ code written to model fracture propagation in a 2D porous medium.
 
 The code is based on the following papers:
 
-T. Heister, M. F. Wheeler, T. Wick:
-A primal-dual active set method and predictor-corrector mesh adaptivity for computing fracture propagation using a phase-field approach.
-Comp. Meth. Appl. Mech. Engrg., Vol. 290 (2015), pp. 466-495
-http://dx.doi.org/10.1016/j.cma.2015.03.009
+1. I Shovkun, DN Espinoza, 2019, Propagation of toughness-dominated fluid-driven fractures in reactive porous media
+International Journal of Rock Mechanics and Mining Sciences 118, 42-51.
 
-Lee, Sanghyun, Mary F. Wheeler, and Thomas Wick.
-"Pressure and fluid-driven fracture propagation in porous media using an
-adaptive finite element phase field model."
-Computer Methods in Applied Mechanics and Engineering 305 (2016): 111-132.
+2. I. Shovkun, D. Nicolas Espinoza, Fracture Propagation in Heterogeneous Porous Media: Pore-Scale Implications of Mineral Dissolution. Rock Mechanics and Rock Engineering. 2019
 
-Note: I am not the author of those papers!
+Please cite them :-)
 
 ![Awesome screenshot](./Screenshot.png)
 
